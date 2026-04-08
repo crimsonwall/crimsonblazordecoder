@@ -59,7 +59,7 @@ cd crimsonblazordecoder
 
 The built `.zap` file is written to `build/zapAddOn/bin/`.
 
-By default the build looks for `zap-extensions` at `../crimsonblazer/zap-extensions`. If your checkout is elsewhere, pass the path explicitly:
+By default the build looks for `zap-extensions` at `../zap-extensions` (i.e. a sibling directory). If your checkout is elsewhere, pass the path explicitly:
 
 ```bash
 ./gradlew jarZapAddOn -PzapExtensionsDir=/path/to/zap-extensions

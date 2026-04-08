@@ -10,7 +10,7 @@ plugins {
 
 // Path to a local zap-extensions checkout. Override with -PzapExtensionsDir=<path>.
 val zapExtensionsDir: String = findProperty("zapExtensionsDir") as String?
-    ?: "../crimsonblazer/zap-extensions"
+    ?: "../zap-extensions"
 
 description = "Decodes and displays Blazor Pack messages sent over WebSockets in pretty-printed JSON."
 

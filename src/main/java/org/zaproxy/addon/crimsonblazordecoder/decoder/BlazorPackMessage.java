@@ -1,0 +1,285 @@
+/*
+ * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
+ *
+ * Written by Renico Koen. Published by crimsonwall.com in 2026.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.zaproxy.addon.crimsonblazordecoder.decoder;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Represents a decoded Blazor Pack message.
+ *
+ * <p>Blazor Pack is the message format used by Blazor Server for communication between the browser
+ * and the server over SignalR WebSockets.
+ */
+public class BlazorPackMessage {
+
+    private static final int MAX_HEX_DISPLAY = 256; // Max bytes to show as hex
+
+    private BlazorPackMessageType messageType;
+    private int messageId;
+    private String rawPayload;
+    private byte[] rawBytes;
+    private Map<String, Object> decodedData;
+    private List<String> references;
+    private boolean isBinary;
+    private long timestamp;
+    private boolean outgoing;
+
+    /** Constructs an empty message with the current timestamp. */
+    public BlazorPackMessage() {
+        this.decodedData = new HashMap<>();
+        this.references = new ArrayList<>();
+        this.timestamp = System.currentTimeMillis();
+    }
+
+    public BlazorPackMessageType getMessageType() {
+        return messageType;
+    }
+
+    public void setMessageType(BlazorPackMessageType messageType) {
+        this.messageType = messageType;
+    }
+
+    public int getMessageId() {
+        return messageId;
+    }
+
+    public void setMessageId(int messageId) {
+        this.messageId = messageId;
+    }
+
+    public String getRawPayload() {
+        return rawPayload;
+    }
+
+    public void setRawPayload(String rawPayload) {
+        this.rawPayload = rawPayload;
+    }
+
+    public byte[] getRawBytes() {
+        return rawBytes;
+    }
+
+    public void setRawBytes(byte[] rawBytes) {
+        this.rawBytes = rawBytes;
+    }
+
+    public Map<String, Object> getDecodedData() {
+        return decodedData;
+    }
+
+    public void setDecodedData(Map<String, Object> decodedData) {
+        this.decodedData = decodedData;
+    }
+
+    /**
+     * Adds a decoded field to the message data.
+     *
+     * @param key the field name
+     * @param value the decoded value
+     */
+    public void addDecodedField(String key, Object value) {
+        this.decodedData.put(key, value);
+    }
+
+    public List<String> getReferences() {
+        return references;
+    }
+
+    public void setReferences(List<String> references) {
+        this.references = references;
+    }
+
+    /**
+     * Adds a reference string (e.g. a JS dependency name).
+     *
+     * @param reference the reference to add
+     */
+    public void addReference(String reference) {
+        this.references.add(reference);
+    }
+
+    public boolean isBinary() {
+        return isBinary;
+    }
+
+    public void setBinary(boolean binary) {
+        isBinary = binary;
+    }
+
+    public boolean isOutgoing() {
+        return outgoing;
+    }
+
+    public void setOutgoing(boolean outgoing) {
+        this.outgoing = outgoing;
+    }
+
+    public long getTimestamp() {
+        return timestamp;
+    }
+
+    public void setTimestamp(long timestamp) {
+        this.timestamp = timestamp;
+    }
+
+    /**
+     * Convert the decoded message to a pretty-printed JSON string.
+     *
+     * @return JSON representation of the message
+     */
+    public String toPrettyJson() {
+        StringBuilder json = new StringBuilder();
+        json.append("{\n");
+        json.append("  \"messageType\": \"").append(messageType).append("\",\n");
+        json.append("  \"messageId\": ").append(messageId).append(",\n");
+        json.append("  \"timestamp\": ").append(timestamp).append(",\n");
+        json.append("  \"isBinary\": ").append(isBinary).append(",\n");
+
+        if (!decodedData.isEmpty()) {
+            json.append("  \"data\": {\n");
+            List<String> keys = new ArrayList<>(decodedData.keySet());
+            for (int i = 0; i < keys.size(); i++) {
+                String key = keys.get(i);
+                Object value = decodedData.get(key);
+                json.append("    \"").append(DecoderUtils.escapeJson(key)).append("\": ");
+
+                if (value instanceof String) {
+                    json.append("\"").append(DecoderUtils.escapeJson((String) value)).append("\"");
+                } else if (value instanceof Number) {
+                    json.append(value);
+                } else if (value instanceof Boolean) {
+                    json.append(value);
+                } else if (value instanceof Map) {
+                    json.append(mapToJson((Map<?, ?>) value, 6));
+                } else if (value instanceof List) {
+                    json.append(listToJson((List<?>) value, 6));
+                } else if (value instanceof byte[]) {
+                    json.append("\"")
+                            .append(DecoderUtils.truncateHex((byte[]) value, MAX_HEX_DISPLAY))
+                            .append("\"");
+                } else if (value == null) {
+                    json.append("null");
+                } else {
+                    json.append("\"")
+                            .append(DecoderUtils.escapeJson(value.toString()))
+                            .append("\"");
+                }
+
+                if (i < keys.size() - 1) {
+                    json.append(",");
+                }
+                json.append("\n");
+            }
+            json.append("  },\n");
+        }
+
+        if (!references.isEmpty()) {
+            json.append("  \"references\": [\n");
+            for (int i = 0; i < references.size(); i++) {
+                json.append("    \"")
+                        .append(DecoderUtils.escapeJson(references.get(i)))
+                        .append("\"");
+                if (i < references.size() - 1) {
+                    json.append(",");
+                }
+                json.append("\n");
+            }
+            json.append("  ],\n");
+        }
+
+        if (rawPayload != null && !rawPayload.isEmpty()) {
+            String truncated =
+                    rawPayload.length() > 2048
+                            ? rawPayload.substring(0, 2048)
+                                    + "... ("
+                                    + rawPayload.length()
+                                    + " chars)"
+                            : rawPayload;
+            json.append("  \"rawPayload\": \"")
+                    .append(DecoderUtils.escapeJson(truncated))
+                    .append("\"");
+        } else {
+            // Remove trailing comma
+            json.setLength(json.length() - 2);
+        }
+
+        json.append("\n}");
+        return json.toString();
+    }
+
+    private String mapToJson(Map<?, ?> map, int indent) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+        List<?> keys = new ArrayList<>(map.keySet());
+        for (int i = 0; i < keys.size(); i++) {
+            Object key = keys.get(i);
+            Object value = map.get(key);
+            sb.append("\n")
+                    .append(" ".repeat(indent))
+                    .append("\"")
+                    .append(DecoderUtils.escapeJson(String.valueOf(key)))
+                    .append("\": ");
+            appendJsonValue(sb, value, indent);
+            if (i < keys.size() - 1) {
+                sb.append(",");
+            }
+        }
+        sb.append("\n").append(" ".repeat(indent - 2)).append("}");
+        return sb.toString();
+    }
+
+    private String listToJson(List<?> list, int indent) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[");
+        for (int i = 0; i < list.size(); i++) {
+            Object value = list.get(i);
+            sb.append("\n").append(" ".repeat(indent));
+            appendJsonValue(sb, value, indent);
+            if (i < list.size() - 1) {
+                sb.append(",");
+            }
+        }
+        sb.append("\n").append(" ".repeat(indent - 2)).append("]");
+        return sb.toString();
+    }
+
+    private void appendJsonValue(StringBuilder sb, Object value, int indent) {
+        if (value instanceof String) {
+            sb.append("\"").append(DecoderUtils.escapeJson((String) value)).append("\"");
+        } else if (value instanceof Number) {
+            sb.append(value);
+        } else if (value instanceof Boolean) {
+            sb.append(value);
+        } else if (value instanceof Map) {
+            sb.append(mapToJson((Map<?, ?>) value, indent + 2));
+        } else if (value instanceof List) {
+            sb.append(listToJson((List<?>) value, indent + 2));
+        } else if (value instanceof byte[]) {
+            sb.append("\"")
+                    .append(DecoderUtils.truncateHex((byte[]) value, MAX_HEX_DISPLAY))
+                    .append("\"");
+        } else if (value == null) {
+            sb.append("null");
+        } else {
+            sb.append(value);
+        }
+    }
+}

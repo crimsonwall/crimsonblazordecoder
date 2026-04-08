@@ -44,7 +44,7 @@ Without this add-on, all of the above is hidden inside binary MessagePack blobs 
 
 ## Installation
 
-Pre-built releases are available on the [releases page](https://github.com/crimsonwall/crimsonblazordecoder/releases). Download the `.zap` file and install it in ZAP via **Tools > Manage Add-ons > Load Add-on from File**.
+Pre-built releases are available on the [releases page](https://github.com/crimsonwall/crimsonblazordecoder/releases). Download the `.zap` file and install it in ZAP via **File > Load Add-on File...**.
 
 After installation, open the panel via **View > Show Tab > Crimson Blazor Decoder Tab**.
 

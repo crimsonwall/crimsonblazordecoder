@@ -28,6 +28,12 @@ zapAddOn {
     }
 }
 
+dependencies {
+    zapAddOn("websocket")
+
+    rootProject.findProject(":testutils")?.let { testImplementation(it) }
+}
+
 spotless {
     java {
         // Override the default ZAP license header with our own.

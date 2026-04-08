@@ -76,6 +76,8 @@ cd /path/to/zap-extensions
 
 Once built, install the add-on via **Tools > Manage Add-ons > Load Add-on from File** and select the `.zap` file, or copy it directly to the ZAP `plugin` directory.
 
+After installation, open the panel via **View > Show Tab > Crimson Blazor Decoder Tab**.
+
 ### Requirements
 
 - OWASP ZAP 2.17.0 or later

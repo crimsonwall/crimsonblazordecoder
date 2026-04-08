@@ -42,6 +42,12 @@ Without this add-on, all of the above is hidden inside binary MessagePack blobs 
 - Right-click copy from detail views
 - Timestamp tooltips showing human-readable dates
 
+## Installation
+
+Pre-built releases are available on the [releases page](https://github.com/crimsonwall/crimsonblazordecoder/releases). Download the `.zap` file and install it in ZAP via **Tools > Manage Add-ons > Load Add-on from File**.
+
+After installation, open the panel via **View > Show Tab > Crimson Blazor Decoder Tab**.
+
 ## Building from Source
 
 ### Prerequisites
@@ -75,8 +81,6 @@ cd /path/to/zap-extensions
 ### Install in ZAP
 
 Once built, install the add-on via **Tools > Manage Add-ons > Load Add-on from File** and select the `.zap` file, or copy it directly to the ZAP `plugin` directory.
-
-After installation, open the panel via **View > Show Tab > Crimson Blazor Decoder Tab**.
 
 ### Requirements
 

@@ -1,5 +1,17 @@
 import org.zaproxy.gradle.addon.AddOnStatus
 
+plugins {
+    id("java-library")
+    alias(libs.plugins.spotless)
+    alias(libs.plugins.lombok)
+    alias(libs.plugins.zaproxy.addon)
+    alias(libs.plugins.zaproxy.common)
+}
+
+// Path to a local zap-extensions checkout. Override with -PzapExtensionsDir=<path>.
+val zapExtensionsDir: String = findProperty("zapExtensionsDir") as String?
+    ?: "../crimsonblazer/zap-extensions"
+
 description = "Decodes and displays Blazor Pack messages sent over WebSockets in pretty-printed JSON."
 
 zapAddOn {
@@ -28,15 +40,31 @@ zapAddOn {
     }
 }
 
-dependencies {
-    zapAddOn("websocket")
-
-    rootProject.findProject(":testutils")?.let { testImplementation(it) }
+repositories {
+    mavenCentral()
 }
 
-configure<com.diffplug.gradle.spotless.SpotlessExtension> {
+group = "org.zaproxy.addon"
+
+configure<JavaPluginExtension> {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.compilerArgs = options.compilerArgs + "-Xlint:processing"
+    options.compilerArgs = options.compilerArgs - "-Werror"
+}
+
+dependencies {
+    compileOnly("org.zaproxy:zap:2.17.0")
+    compileOnly(files("$zapExtensionsDir/addOns/websocket/build/libs/websocket-37.jar"))
+    compileOnly("biz.aQute.bnd:biz.aQute.bnd.annotation:7.2.3")
+    compileOnly("com.google.code.findbugs:findbugs-annotations:3.0.1")
+}
+
+spotless {
     java {
-        // Override the default ZAP license header with our own.
         clearSteps()
         licenseHeader(
             """

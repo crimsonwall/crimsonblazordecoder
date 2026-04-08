@@ -12,6 +12,18 @@ Blazor Server applications communicate between the browser and server using the 
 
 Crimson Blazor Decoder intercepts these WebSocket messages, decodes the MessagePack payload, and presents the data as pretty-printed JSON in a dedicated ZAP panel, enabling security testers to inspect and analyse Blazor Pack traffic.
 
+## Penetration Testing Blazor Applications
+
+Blazor Server is increasingly used in enterprise web applications. During a penetration test, being able to read Blazor Pack traffic is essential for:
+
+- **Understanding application logic** — Blazor Server renders UI server-side and pushes diffs to the client as `RENDER_BATCH` messages. Decoding these reveals which components are rendering, what data they contain, and how the UI state changes in response to user actions.
+- **Identifying sensitive data exposure** — Component state, form values, and server responses all travel over the WebSocket. Decoded messages make it straightforward to spot PII, tokens, or business logic that should not be visible to the client.
+- **Mapping JS interop calls** — `JS_INTEROP` messages show every JavaScript function invoked by the server, including method names and arguments. This is useful for finding dangerous sinks or undocumented client-side behaviour.
+- **Replaying and manipulating traffic** — With decoded message structure visible, you can craft or modify WebSocket frames in ZAP to test for insecure direct object references, authorisation flaws, or input validation gaps at the Blazor hub level.
+- **Identifying SignalR circuit endpoints** — Circuit Start and Close messages reveal connection identifiers and negotiation details that can be used to test session handling and connection hijacking scenarios.
+
+Without this add-on, all of the above is hidden inside binary MessagePack blobs that appear as garbage in ZAP's WebSockets tab.
+
 ## How It Works
 
 1. **Intercepts** WebSocket message frames (both text and binary) through a ZAP WebSocket observer.
@@ -31,24 +43,39 @@ Crimson Blazor Decoder intercepts these WebSocket messages, decodes the MessageP
 - Right-click copy from detail views
 - Timestamp tooltips showing human-readable dates
 
-## Installation
+## Building from Source
 
-### From Source
+### Prerequisites
 
-1. Clone this repository inside the `zap-extensions` workspace:
-   ```bash
-   git clone https://github.com/crimsonwall/crimsonblazordecoder.git
-   ```
+- JDK 17 or later
+- A local checkout of [zap-extensions](https://github.com/zaproxy/zap-extensions) with the websocket add-on already built
 
-2. Build the add-on:
-   ```bash
-   cd zap-extensions
-   ./gradlew :addOns:crimsonblazordecoder:build
-   ```
+### Clone and build
 
-3. The built add-on JAR.
+```bash
+git clone https://github.com/crimsonwall/crimsonblazordecoder.git
+cd crimsonblazordecoder
+./gradlew jarZapAddOn
+```
 
-4. Install in ZAP via **Tools > Manage Add-ons** and load the JAR file, or copy it to the ZAP `plugin` directory.
+The built `.zap` file is written to `build/zapAddOn/bin/`.
+
+By default the build looks for `zap-extensions` at `../crimsonblazer/zap-extensions`. If your checkout is elsewhere, pass the path explicitly:
+
+```bash
+./gradlew jarZapAddOn -PzapExtensionsDir=/path/to/zap-extensions
+```
+
+The websocket add-on jar must already be built inside that checkout:
+
+```bash
+cd /path/to/zap-extensions
+./gradlew :addOns:websocket:jar
+```
+
+### Install in ZAP
+
+Once built, install the add-on via **Tools > Manage Add-ons > Load Add-on from File** and select the `.zap` file, or copy it directly to the ZAP `plugin` directory.
 
 ### Requirements
 

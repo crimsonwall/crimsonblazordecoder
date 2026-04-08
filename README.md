@@ -19,7 +19,6 @@ Blazor Server is increasingly used in enterprise web applications. During a pene
 - **Understanding application logic** — Blazor Server renders UI server-side and pushes diffs to the client as `RENDER_BATCH` messages. Decoding these reveals which components are rendering, what data they contain, and how the UI state changes in response to user actions.
 - **Identifying sensitive data exposure** — Component state, form values, and server responses all travel over the WebSocket. Decoded messages make it straightforward to spot PII, tokens, or business logic that should not be visible to the client.
 - **Mapping JS interop calls** — `JS_INTEROP` messages show every JavaScript function invoked by the server, including method names and arguments. This is useful for finding dangerous sinks or undocumented client-side behaviour.
-- **Replaying and manipulating traffic** — With decoded message structure visible, you can craft or modify WebSocket frames in ZAP to test for insecure direct object references, authorisation flaws, or input validation gaps at the Blazor hub level.
 - **Identifying SignalR circuit endpoints** — Circuit Start and Close messages reveal connection identifiers and negotiation details that can be used to test session handling and connection hijacking scenarios.
 
 Without this add-on, all of the above is hidden inside binary MessagePack blobs that appear as garbage in ZAP's WebSockets tab.

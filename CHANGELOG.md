@@ -2,7 +2,7 @@
 
 All notable changes to this add-on will be documented in this file.
 
-## 0.2.0 - 2026-04-09
+## 0.2.0 - 2026-04-11
 
 ### Added
 - Blazor Pack message editing and replay - outgoing messages can now be modified in a JSON editor and sent back to the server

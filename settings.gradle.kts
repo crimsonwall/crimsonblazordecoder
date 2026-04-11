@@ -32,6 +32,8 @@ val addOns =
         "callhome",
         "client",
         "commonlib",
+        "crimsonautorize",
+        "crimsonblazordecoder",
         "coreLang",
         "custompayloads",
         "database",

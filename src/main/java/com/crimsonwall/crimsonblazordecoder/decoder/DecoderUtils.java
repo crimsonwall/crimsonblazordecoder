@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen. Published by crimsonwall.com in 2026.
+ * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.zaproxy.addon.crimsonblazordecoder.decoder;
+package com.crimsonwall.crimsonblazordecoder.decoder;
 
 /** Shared utility methods for decoder classes. */
 final class DecoderUtils {
 
     private DecoderUtils() {}
+
+    private static final char[] HEX_CHARS = "0123456789abcdef".toCharArray();
 
     /**
      * Converts a byte array to a lowercase hex string with no separators.
@@ -31,7 +33,8 @@ final class DecoderUtils {
     static String bytesToHex(byte[] bytes) {
         StringBuilder sb = new StringBuilder(bytes.length * 2);
         for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
+            sb.append(HEX_CHARS[(b >> 4) & 0x0F]);
+            sb.append(HEX_CHARS[b & 0x0F]);
         }
         return sb.toString();
     }
@@ -52,7 +55,8 @@ final class DecoderUtils {
         }
         StringBuilder sb = new StringBuilder(maxBytes * 2 + 30);
         for (int i = 0; i < maxBytes; i++) {
-            sb.append(String.format("%02x", bytes[i]));
+            sb.append(HEX_CHARS[(bytes[i] >> 4) & 0x0F]);
+            sb.append(HEX_CHARS[bytes[i] & 0x0F]);
         }
         sb.append("... (").append(bytes.length).append(" bytes total)");
         return sb.toString();
@@ -70,12 +74,40 @@ final class DecoderUtils {
         if (input == null) {
             return "";
         }
-        return input.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t")
-                .replace("\b", "\\b")
-                .replace("\f", "\\f");
+        StringBuilder sb = new StringBuilder(input.length());
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            switch (c) {
+                case '\\':
+                    sb.append("\\\\");
+                    break;
+                case '"':
+                    sb.append("\\\"");
+                    break;
+                case '\n':
+                    sb.append("\\n");
+                    break;
+                case '\r':
+                    sb.append("\\r");
+                    break;
+                case '\t':
+                    sb.append("\\t");
+                    break;
+                case '\b':
+                    sb.append("\\b");
+                    break;
+                case '\f':
+                    sb.append("\\f");
+                    break;
+                default:
+                    if (c < 0x20) {
+                        // Escape any other control character as backslash-u-XXXX
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+            }
+        }
+        return sb.toString();
     }
 }

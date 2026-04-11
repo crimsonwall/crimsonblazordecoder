@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen. Published by crimsonwall.com in 2026.
+ * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.zaproxy.addon.crimsonblazordecoder;
+package com.crimsonwall.crimsonblazordecoder;
 
 import java.awt.EventQueue;
+import java.io.IOException;
 import java.net.URI;
 import java.net.URL;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import javax.swing.ImageIcon;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -27,12 +31,16 @@ import org.parosproxy.paros.control.Control;
 import org.parosproxy.paros.extension.ExtensionAdaptor;
 import org.parosproxy.paros.extension.ExtensionHook;
 import org.parosproxy.paros.view.View;
-import org.zaproxy.addon.crimsonblazordecoder.decoder.BlazorPackDecoder;
-import org.zaproxy.addon.crimsonblazordecoder.decoder.BlazorPackMessage;
-import org.zaproxy.addon.crimsonblazordecoder.ui.CrimsonBlazorDecoderPanel;
+import com.crimsonwall.crimsonblazordecoder.decoder.BlazorPackDecoder;
+import com.crimsonwall.crimsonblazordecoder.decoder.BlazorPackEncoder;
+import com.crimsonwall.crimsonblazordecoder.decoder.BlazorPackMessage;
+import com.crimsonwall.crimsonblazordecoder.ui.CrimsonBlazorDecoderPanel;
 import org.zaproxy.zap.extension.websocket.ExtensionWebSocket;
+import org.zaproxy.zap.extension.websocket.WebSocketChannelDTO;
 import org.zaproxy.zap.extension.websocket.WebSocketMessage;
+import org.zaproxy.zap.extension.websocket.WebSocketMessageDTO;
 import org.zaproxy.zap.extension.websocket.WebSocketObserver;
+import org.zaproxy.zap.extension.websocket.WebSocketProxy;
 import org.zaproxy.zap.utils.DisplayUtils;
 
 /**
@@ -57,11 +65,17 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
     /** Maximum payload size to process (10 MB). */
     private static final int MAX_PAYLOAD_SIZE = 10_485_760;
 
-    private ExtensionWebSocket extensionWebSocket;
-    private BlazorPackDecoder decoder;
-    private CrimsonBlazorDecoderPanel blazerPanel;
-    private CrimsonBlazorDecoderObserver webSocketObserver;
-    private CrimsonBlazorDecoderAPI api;
+    private volatile ExtensionWebSocket extensionWebSocket;
+    private volatile BlazorPackDecoder decoder;
+    private volatile CrimsonBlazorDecoderPanel blazerPanel;
+    private volatile CrimsonBlazorDecoderObserver webSocketObserver;
+    private volatile CrimsonBlazorDecoderAPI api;
+
+    /**
+     * Active WebSocket proxies keyed by channel ID. Used to send modified packets back to the
+     * server on behalf of the client.
+     */
+    private final Map<Integer, WebSocketProxy> activeProxies = new ConcurrentHashMap<>();
 
     /** Creates the extension and sets the i18n prefix. */
     public ExtensionCrimsonBlazorDecoder() {
@@ -101,6 +115,7 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
             extensionWebSocket.removeAllChannelObserver(webSocketObserver);
             LOGGER.info("Crimson Blazor Decoder WebSocket observer removed");
         }
+        activeProxies.clear();
         decoder = null;
         blazerPanel = null;
         webSocketObserver = null;
@@ -146,6 +161,11 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
         return blazerPanel;
     }
 
+    /** Check if a WebSocket channel is currently active (connected). */
+    public boolean isChannelActive(int channelId) {
+        return activeProxies.containsKey(channelId);
+    }
+
     /** Get the decoder instance. */
     public BlazorPackDecoder getDecoder() {
         return decoder;
@@ -161,13 +181,72 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
         }
     }
 
+    /**
+     * Send a modified Blazor Pack packet to the server on the specified channel.
+     *
+     * <p>The {@code editedJson} is re-encoded as either a Blazor Pack binary packet or a text
+     * SignalR message depending on {@code isBinary}. Only client-to-server (outgoing) traffic is
+     * supported.
+     *
+     * @param channelId the WebSocket channel to send on
+     * @param editedJson the JSON string representing the modified hub message
+     * @param isBinary {@code true} to encode as a binary Blazor Pack packet; {@code false} for text
+     * @throws IllegalArgumentException if {@code editedJson} cannot be parsed
+     * @throws IOException if the underlying WebSocket send fails
+     * @throws IllegalStateException if the channel is not currently active
+     */
+    public void sendModifiedPacket(int channelId, String editedJson, boolean isBinary)
+            throws IOException {
+        WebSocketProxy proxy = activeProxies.get(channelId);
+        if (proxy == null) {
+            throw new IllegalStateException(
+                    "No active WebSocket connection found for channel " + channelId);
+        }
+
+        BlazorPackEncoder encoder = new BlazorPackEncoder();
+        byte[] payload;
+        int opcode;
+
+        if (isBinary) {
+            Object hubMessage = encoder.parseJson(editedJson);
+            payload = encoder.encodeAsBlazerPack(hubMessage);
+            opcode = WebSocketMessage.OPCODE_BINARY;
+        } else {
+            payload = encoder.encodeAsTextMessage(editedJson);
+            opcode = WebSocketMessage.OPCODE_TEXT;
+        }
+
+        WebSocketChannelDTO channelDto = new WebSocketChannelDTO();
+        channelDto.setId(channelId);
+
+        WebSocketMessageDTO dto = new WebSocketMessageDTO(channelDto);
+        dto.setPayload(payload);
+        dto.setOpcode(opcode);
+        dto.setOutgoing(true);
+        dto.setPayloadLength(payload.length);
+
+        proxy.sendAndNotify(dto, WebSocketProxy.Initiator.MANUAL_REQUEST);
+        LOGGER.info(
+                "Sent modified Blazor Pack packet on channel {}: {} bytes, binary={}",
+                channelId,
+                payload.length,
+                isBinary);
+    }
+
+    /** Cached icon to avoid repeated loading. */
+    private static volatile ImageIcon cachedIcon;
+
     /** Get the add-on's icon. */
     public static ImageIcon getIcon() {
-        return new ImageIcon(
-                DisplayUtils.getScaledIcon(
-                                ExtensionCrimsonBlazorDecoder.class.getResource(
-                                        "/resources/crimsonblazordecoder-icon.png"))
-                        .getImage());
+        if (cachedIcon == null) {
+            cachedIcon =
+                    new ImageIcon(
+                            DisplayUtils.getScaledIcon(
+                                            ExtensionCrimsonBlazorDecoder.class.getResource(
+                                                    "/resources/crimsonblazordecoder-icon.png"))
+                                    .getImage());
+        }
+        return cachedIcon;
     }
 
     /**
@@ -209,19 +288,12 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
                     return true;
                 }
 
-                // Log for debugging
                 String preview =
                         new String(
                                 payloadBytes,
                                 0,
-                                Math.min(100, payloadBytes.length),
+                                Math.min(200, payloadBytes.length),
                                 java.nio.charset.StandardCharsets.UTF_8);
-                LOGGER.debug(
-                        "WebSocket message on channel {}: opcode={}, payloadLength={}, preview={}",
-                        channelId,
-                        opcode,
-                        payloadBytes.length,
-                        preview);
 
                 // Check if this looks like a Blazor/SignalR message
                 boolean isTextFrame = opcode == WebSocketMessage.OPCODE_TEXT;
@@ -229,12 +301,15 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
                         isPotentialBlazorMessage(preview, isTextFrame, payloadBytes);
 
                 if (!isPotentialBlazorMessage) {
-                    LOGGER.debug("Message does not appear to be a Blazor message");
                     return true;
                 }
 
                 // Try to decode
-                BlazorPackMessage blazorMessage = decoder.decode(payloadBytes, isTextFrame);
+                BlazorPackDecoder localDecoder = decoder;
+                if (localDecoder == null) {
+                    return true;
+                }
+                BlazorPackMessage blazorMessage = localDecoder.decode(payloadBytes, isTextFrame);
                 if (blazorMessage != null) {
                     blazorMessage.setMessageId(channelId);
                     blazorMessage.setBinary(!isTextFrame);
@@ -260,8 +335,13 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
         public void onStateChange(
                 org.zaproxy.zap.extension.websocket.WebSocketProxy.State state,
                 org.zaproxy.zap.extension.websocket.WebSocketProxy proxy) {
-            // Log state changes for debugging
             LOGGER.debug("WebSocket state changed: {}, channel: {}", state, proxy.getChannelId());
+            if (state == WebSocketProxy.State.OPEN) {
+                activeProxies.put(proxy.getChannelId(), proxy);
+            } else if (state == WebSocketProxy.State.CLOSED
+                    || state == WebSocketProxy.State.CLOSING) {
+                activeProxies.remove(proxy.getChannelId());
+            }
         }
 
         /**
@@ -278,59 +358,68 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
                 return false;
             }
 
-            // For text frames, check for SignalR/Blazor markers
+            // For text frames, check for Blazor/SignalR-specific markers.
+            // Generic JSON fields like "type" and "target" are excluded as they match
+            // many non-Blazor protocols (e.g., JSON-RPC).
             if (isTextFrame) {
-                return payload.contains("\"type\"")
-                        || payload.contains("invocation")
-                        || payload.contains("renderBatch")
-                        || payload.contains("\"Close\"")
-                        || payload.contains("\"Ping\"")
+                return payload.contains("blazorpack")
                         || payload.contains("blazor")
+                        || payload.contains("Blazor")
+                        || payload.contains("renderBatch")
+                        || payload.contains("RenderBatch")
+                        || payload.contains("DispatchEvent")
+                        || payload.contains("DotNet")
                         || payload.contains("Microsoft.AspNetCore")
-                        || payload.contains("arguments")
-                        || payload.contains("target")
-                        || payload.contains("Invocation");
+                        || payload.contains("StartCircuit")
+                        || payload.contains("EndInvokeJS")
+                        || payload.contains("BeginInvokeDotNet")
+                        || payload.contains("JS.")
+                        || payload.contains("OnRenderCompleted")
+                        || payload.contains("UpdateRootComponents")
+                        || payload.contains("\"protocol\":")
+                        || (payload.contains("\"type\":") && payload.contains("\"target\":"));
             }
 
-            // For binary frames, check for valid MessagePack or SignalR binary markers.
-            // SignalR binary messages start with 0x01 or 0x02.
-            // Blazor Pack MessagePack messages typically start with fixarray (0x90-0x9f) or
-            // fixmap (0x80-0x8f), sometimes preceded by a positive fixint prefix (0x00-0x7f)
-            // or a BIN8/16/32 marker (0xc4-0xc6).
-            if (rawBytes != null && rawBytes.length > 0) {
+            // For binary frames, accept frames that could be Blazor Pack messages.
+            // Blazor Pack frames start with a VarInt length prefix followed by MessagePack data.
+            // A valid single-byte VarInt (0x00-0x7f) gives the MessagePack payload length.
+            // The next byte after the VarInt must be a valid MessagePack array start (fixarray 0x90-0x9f)
+            // or a map start (0x80-0x8f), which is what SignalR hub messages use.
+            if (rawBytes != null && rawBytes.length >= 3) {
                 int firstByte = rawBytes[0] & 0xFF;
-                // SignalR binary format markers
-                if (firstByte == 0x01 || firstByte == 0x02) {
-                    return true;
-                }
-                // fixarray (0x90-0x9f) — common for SignalR hub messages
-                if (firstByte >= 0x90 && firstByte <= 0x9f) {
-                    return true;
-                }
-                // fixmap (0x80-0x8f)
-                if (firstByte >= 0x80 && firstByte <= 0x8f) {
-                    return true;
-                }
-                // BIN8/16/32 (0xc4-0xc6) — Blazor Pack multi-value encoding
-                if (firstByte >= 0xc4 && firstByte <= 0xc6) {
-                    return true;
-                }
-                // nil (0xc0) or FIXEXT (0xd4-0xd8) — extension markers
-                if (firstByte == 0xc0 || (firstByte >= 0xd4 && firstByte <= 0xd8)) {
-                    return true;
-                }
-                // Positive fixint (0x00-0x7f) as BlazorPack prefix — only if followed by
-                // a valid MessagePack type
-                if (firstByte <= 0x7f && rawBytes.length > 1) {
-                    int secondByte = rawBytes[1] & 0xFF;
-                    if ((secondByte >= 0x90 && secondByte <= 0x9f) // fixarray
-                            || (secondByte >= 0x80 && secondByte <= 0x8f) // fixmap
-                            || secondByte >= 0xc0) { // other MessagePack formats
-                        return true;
+                if (firstByte <= 0x7f) {
+                    // Single-byte VarInt — verify frame is long enough and next byte is MessagePack
+                    if (rawBytes.length >= firstByte + 1) {
+                        int msgPackStart = rawBytes[firstByte] & 0xFF;
+                        // Check for fixarray (0x90-0x9f), array16 (0xdc), array32 (0xdd),
+                        // fixmap (0x80-0x8f), map16 (0xde), map32 (0xdf)
+                        if ((msgPackStart >= 0x90 && msgPackStart <= 0x9f)
+                                || msgPackStart == 0xdc || msgPackStart == 0xdd
+                                || (msgPackStart >= 0x80 && msgPackStart <= 0x8f)
+                                || msgPackStart == 0xde || msgPackStart == 0xdf) {
+                            return true;
+                        }
+                    }
+                } else {
+                    // Multi-byte VarInt (0x80-0xff) — accept only if the payload after VarInt
+                    // starts with a MessagePack structure indicator
+                    int varIntLen = 1;
+                    while (varIntLen < rawBytes.length && (rawBytes[varIntLen - 1] & 0x80) != 0) {
+                        varIntLen++;
+                    }
+                    if (varIntLen < rawBytes.length) {
+                        int msgPackStart = rawBytes[varIntLen] & 0xFF;
+                        if ((msgPackStart >= 0x90 && msgPackStart <= 0x9f)
+                                || msgPackStart == 0xdc || msgPackStart == 0xdd
+                                || (msgPackStart >= 0x80 && msgPackStart <= 0x8f)
+                                || msgPackStart == 0xde || msgPackStart == 0xdf) {
+                            return true;
+                        }
                     }
                 }
             }
             return false;
         }
     }
+
 }

@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen. Published by crimsonwall.com in 2026.
+ * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,8 +15,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.zaproxy.addon.crimsonblazordecoder.decoder;
+package com.crimsonwall.crimsonblazordecoder.decoder;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -84,11 +86,14 @@ public class BlazorPackDecoder {
         }
 
         try {
+            BlazorPackMessage result;
             if (isTextMessage) {
-                return decodeTextMessage(payload);
+                result = decodeTextMessage(payload);
             } else {
-                return decodeBinaryMessage(payload);
+                result = decodeBinaryMessage(payload);
             }
+
+            return result;
         } catch (Exception e) {
             LOGGER.debug("Failed to decode Blazor Pack message: {}", e.getMessage());
             return null;
@@ -104,18 +109,14 @@ public class BlazorPackDecoder {
     private BlazorPackMessage decodeTextMessage(byte[] payload) {
         String text = new String(payload, StandardCharsets.UTF_8);
 
-        // Check if this looks like a SignalR/Blazor message
-        if (!isBlazorSignalRMessage(text)) {
-            return null;
-        }
-
         BlazorPackMessage message = new BlazorPackMessage();
         message.setBinary(false);
 
         // Split by record separator if present
         String[] records = text.split(TEXT_RECORD_SEPARATOR);
-
-        for (String record : records) {
+        boolean atLeastOneParsed = false;
+        for (int i = 0; i < records.length; i++) {
+            String record = records[i];
             if (record.isEmpty()) {
                 continue;
             }
@@ -124,11 +125,18 @@ public class BlazorPackDecoder {
             try {
                 JSONObject json = JSONObject.fromObject(record);
                 parseSignalRMessage(json, message);
+                atLeastOneParsed = true;
             } catch (Exception e) {
-                // Might be a simpler format
-                message.setRawPayload(text);
-                message.setMessageType(BlazorPackMessageType.UNKNOWN);
+                // Record is not valid JSON - will mark as UNKNOWN below
             }
+        }
+
+        // Always store the full raw payload (may contain multiple records)
+        message.setRawPayload(text);
+
+        // If no records parsed as valid JSON, mark as UNKNOWN
+        if (!atLeastOneParsed) {
+            message.setMessageType(BlazorPackMessageType.UNKNOWN);
         }
 
         return message;
@@ -150,14 +158,22 @@ public class BlazorPackDecoder {
             return null;
         }
 
+        int firstByte = payload[0] & 0xFF;
+
         LOGGER.debug(
                 "Decoding binary message, first byte: 0x{}",
                 Integer.toHexString(payload[0] & 0xFF));
 
-        // Check if this is a SignalR binary format message (starts with 0x01 or 0x02)
-        int firstByte = payload[0] & 0xFF;
+        // Check if this is a SignalR binary format message (starts with 0x01 or 0x02).
+        // NOTE: 0x01 and 0x02 are also valid VarInt length prefixes (values 1 and 2) used in
+        // Blazor Pack format. Try SignalR first, fall back to Blazor Pack if it fails.
         if (firstByte == BINARY_MESSAGE_FORMAT || firstByte == TEXT_MESSAGE_FORMAT) {
-            return decodeSignalRBinaryMessage(payload);
+            BlazorPackMessage result = decodeSignalRBinaryMessage(payload);
+            if (result != null) {
+                return result;
+            }
+            // SignalR format failed — first byte is likely a VarInt length prefix, not a format marker
+            return decodeMessagePackMessage(payload);
         }
 
         // Otherwise, try to decode as raw MessagePack (Blazor Pack format)
@@ -192,6 +208,16 @@ public class BlazorPackDecoder {
                         formatType);
                 return tryParseAsJson(payload, message);
         }
+    }
+
+    /** Check if a List looks like a Blazor Pack hub message (SignalR format). */
+    private boolean isHubMessage(List<Object> list) {
+        if (list.isEmpty()) {
+            return false;
+        }
+        // SignalR hub messages start with an integer type (1=Invocation, 2=StreamItem, 3=Completion, etc.)
+        Object first = list.get(0);
+        return first instanceof Number;
     }
 
     /** Decode a binary data message (format 0x01). */
@@ -242,6 +268,7 @@ public class BlazorPackDecoder {
 
             // Read length-prefixed UTF-8 string
             int length = readVarInt(buffer);
+
             if (length <= 0 || length > buffer.remaining()) {
                 LOGGER.debug("Invalid length: {}, remaining: {}", length, buffer.remaining());
                 return null;
@@ -251,9 +278,11 @@ public class BlazorPackDecoder {
             buffer.get(data);
 
             String text = new String(data, StandardCharsets.UTF_8);
+
             LOGGER.debug("Binary text message: {}", text);
 
-            return decodeTextMessage(text.getBytes(StandardCharsets.UTF_8));
+            BlazorPackMessage result = decodeTextMessage(data);
+            return result;
         } catch (Exception e) {
             LOGGER.debug("Error decoding binary text message: {}", e.getMessage());
             return null;
@@ -265,6 +294,10 @@ public class BlazorPackDecoder {
      *
      * <p>After the handshake, Blazor Pack sends messages directly as MessagePack without the
      * SignalR binary wrapper.
+     *
+     * <p>The wire format is one or more VarInt-prefixed MessagePack values:
+     *
+     * <pre>VarInt(len1) + MessagePack(hubMsg1) [+ VarInt(len2) + MessagePack(hubMsg2) ...]</pre>
      */
     private BlazorPackMessage decodeMessagePackMessage(byte[] payload) {
         BlazorPackMessage message = new BlazorPackMessage();
@@ -277,57 +310,35 @@ public class BlazorPackDecoder {
                 payload.length);
 
         try {
-            // BlazorPack sends a SEQUENCE of MessagePack values:
-            // First value: prefix (message type/length as integer or extension)
-            // Second value: the actual hub message as a MessagePack array
-            List<Object> allValues = msgPackDecoder.decodeAll(payload);
+            // First, try to parse as VarInt-prefixed Blazor Pack messages. This correctly handles
+            // multi-message frames where VarInt prefixes > 127 bytes span 2+ bytes and would be
+            // misinterpreted by decodeAll() as MessagePack values (fixstr, fixmap, etc.).
+            List<List<Object>> hubMessages = tryParseVarIntPrefixedMessages(payload);
 
-            if (allValues.isEmpty()) {
-                message.setRawPayload(Base64.getEncoder().encodeToString(payload));
-                message.addDecodedField("hexDump", DecoderUtils.bytesToHex(payload));
-                message.setMessageType(BlazorPackMessageType.UNKNOWN);
-                return message;
+            if (hubMessages == null) {
+                // VarInt-prefixed parsing failed — fall back to raw decodeAll() approach for
+                // single-message frames and edge cases.
+                hubMessages = decodeUsingDecodeAll(payload, message);
+                if (hubMessages == null) {
+                    // decodeAll() also failed — already populated error fields in message
+                    return message;
+                }
             }
 
-            // Combine all decoded values into a single structure
             Object decoded;
-            if (allValues.size() == 1) {
-                decoded = allValues.get(0);
+            if (hubMessages.isEmpty()) {
+                // No hub message found — fall back to raw representation
+                List<Object> allValues = msgPackDecoder.decodeAll(payload);
+                decoded = allValues;
+            } else if (hubMessages.size() == 1) {
+                decoded = hubMessages.get(0);
             } else {
-                // Multiple values: first is a prefix/wrapper, second is the actual hub message.
-                // The prefix can be: an integer, an extension map, or error map.
-                // The actual message is the value that is a List (SignalR hub message array).
-                Object prefix = allValues.get(0);
-                Object messageBody = null;
-
-                // Find the first List value — that's the actual hub message
-                for (int i = 1; i < allValues.size(); i++) {
-                    if (allValues.get(i) instanceof List) {
-                        messageBody = allValues.get(i);
-                        break;
-                    }
-                }
-
-                if (messageBody instanceof List) {
-                    @SuppressWarnings("unchecked")
-                    List<Object> msgList = (List<Object>) messageBody;
-                    // Store prefix info as metadata
-                    if (prefix instanceof Map) {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> prefixMap = (Map<String, Object>) prefix;
-                        if (prefixMap.containsKey("extensionType")) {
-                            message.addDecodedField(
-                                    "prefixExtensionType",
-                                    String.valueOf(prefixMap.get("extensionType")));
-                        }
-                    } else if (prefix instanceof Number) {
-                        message.addDecodedField("prefixValue", ((Number) prefix).intValue());
-                    }
-                    decoded = msgList;
-                } else {
-                    // No list found — just use all values
-                    decoded = allValues;
-                }
+                // Multiple hub messages in one frame — wrap them in an outer List so the encoder
+                // can round-trip them correctly (list-of-lists signals multi-message format).
+                decoded = new ArrayList<>(hubMessages);
+                message.addDecodedField("messageCount", hubMessages.size());
+                LOGGER.debug(
+                        "Multi-message Blazor Pack payload: {} hub messages", hubMessages.size());
             }
 
             LOGGER.debug("MessagePack decoded successfully: {}", decoded.getClass().getName());
@@ -335,14 +346,16 @@ public class BlazorPackDecoder {
             String jsonStr = msgPackDecoder.toJsonString(decoded);
             message.setRawPayload(jsonStr);
 
-            if (decoded instanceof Map) {
+            // Use the last hub message for SignalR type detection; it is usually the most specific
+            // when multiple messages are batched together in one frame.
+            List<Object> primaryMsg = hubMessages.isEmpty() ? null : hubMessages.get(hubMessages.size() - 1);
+
+            if (primaryMsg != null) {
+                parseMessagePackList(primaryMsg, message);
+            } else if (decoded instanceof Map) {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> map = (Map<String, Object>) decoded;
                 parseMessagePackMap(map, message);
-            } else if (decoded instanceof List) {
-                @SuppressWarnings("unchecked")
-                List<Object> list = (List<Object>) decoded;
-                parseMessagePackList(list, message);
             } else {
                 message.addDecodedField("value", decoded);
                 message.setMessageType(BlazorPackMessageType.UNKNOWN);
@@ -359,6 +372,151 @@ public class BlazorPackDecoder {
         }
 
         return message;
+    }
+
+    /**
+     * Try to parse the payload as VarInt-prefixed Blazor Pack messages.
+     *
+     * <p>Reads sequential VarInt(length) + MessagePack(hubMsg) chunks. Returns null if the payload
+     * doesn't look like valid VarInt-prefixed format (e.g., length overflows remaining bytes).
+     *
+     * @return list of decoded hub messages, or null if parsing fails
+     */
+    private List<List<Object>> tryParseVarIntPrefixedMessages(byte[] payload) {
+        ByteBuffer buffer = ByteBuffer.wrap(payload);
+        List<List<Object>> hubMessages = new ArrayList<>();
+
+        while (buffer.hasRemaining()) {
+            // Read VarInt length prefix
+            int length = readPackVarInt(buffer);
+            if (length <= 0 || length > buffer.remaining()) {
+                return null; // Not a valid VarInt-prefixed format
+            }
+
+            // Extract the MessagePack bytes for this message
+            byte[] msgBytes = new byte[length];
+            buffer.get(msgBytes);
+
+            // Decode as MessagePack
+            Object decoded = msgPackDecoder.decode(msgBytes);
+            if (decoded == null) {
+                return null;
+            }
+
+            if (decoded instanceof List) {
+                @SuppressWarnings("unchecked")
+                List<Object> list = (List<Object>) decoded;
+                if (isHubMessage(list)) {
+                    hubMessages.add(list);
+                } else {
+                    // Try to extract hub messages from nested structure
+                    for (Object inner : list) {
+                        if (inner instanceof List) {
+                            @SuppressWarnings("unchecked")
+                            List<Object> innerList = (List<Object>) inner;
+                            if (isHubMessage(innerList)) {
+                                hubMessages.add(innerList);
+                            }
+                        }
+                    }
+                    // If no hub messages found in this value, still record the decoded value
+                    // so we don't lose data
+                    if (hubMessages.isEmpty()) {
+                        return null;
+                    }
+                }
+            } else {
+                // Non-list value — could be a standalone value or prefix metadata.
+                // This is fine for single-element messages but unusual for the first value.
+                // Continue to see if there are more messages.
+            }
+        }
+
+        return hubMessages;
+    }
+
+    /**
+     * Read a VarInt using the Blazor Pack / SignalR format (little-endian, 7-bit encoding, bit 7 =
+     * continuation).
+     *
+     * <p>Unlike {@link #readVarInt(ByteBuffer)}, this method does not write debug output.
+     */
+    private int readPackVarInt(ByteBuffer buffer) {
+        int value = 0;
+        int shift = 0;
+        for (int i = 0; i < MAX_VARINT_BYTES; i++) {
+            if (!buffer.hasRemaining()) {
+                return -1;
+            }
+            byte b = buffer.get();
+            value |= (b & 0x7F) << shift;
+            shift += 7;
+            if ((b & 0x80) == 0) {
+                if (value > MAX_VARINT_VALUE) {
+                    return -1;
+                }
+                return value;
+            }
+        }
+        return -1; // Too many continuation bytes
+    }
+
+    /**
+     * Fallback: decode using the raw {@code decodeAll()} approach. This handles edge cases where
+     * the VarInt-prefixed parser doesn't apply (e.g., single-message frames where the first byte is
+     * a valid MessagePack value).
+     *
+     * @return list of hub messages, or null if decoding failed entirely (error fields populated in
+     *     {@code message})
+     */
+    private List<List<Object>> decodeUsingDecodeAll(byte[] payload, BlazorPackMessage message) {
+        List<Object> allValues = msgPackDecoder.decodeAll(payload);
+
+        if (allValues.isEmpty()) {
+            message.setRawPayload(Base64.getEncoder().encodeToString(payload));
+            message.addDecodedField("hexDump", DecoderUtils.bytesToHex(payload));
+            message.setMessageType(BlazorPackMessageType.UNKNOWN);
+            return null;
+        }
+
+        // Collect all hub messages (Lists). Non-list values are VarInt length prefixes or
+        // extension wrappers — keep the first non-list prefix for metadata only.
+        List<List<Object>> hubMessages = new ArrayList<>();
+        Object firstPrefix = null;
+        for (Object v : allValues) {
+            if (v instanceof List) {
+                @SuppressWarnings("unchecked")
+                List<Object> hubMsg = (List<Object>) v;
+                if (isHubMessage(hubMsg)) {
+                    hubMessages.add(hubMsg);
+                } else {
+                    for (Object inner : hubMsg) {
+                        if (inner instanceof List) {
+                            @SuppressWarnings("unchecked")
+                            List<Object> innerMsg = (List<Object>) inner;
+                            if (isHubMessage(innerMsg)) {
+                                hubMessages.add(innerMsg);
+                            }
+                        }
+                    }
+                }
+            } else if (firstPrefix == null) {
+                firstPrefix = v;
+            }
+        }
+
+        // Store prefix metadata for single-message payloads
+        if (hubMessages.size() == 1 && firstPrefix instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> prefixMap = (Map<String, Object>) firstPrefix;
+            if (prefixMap.containsKey("extensionType")) {
+                message.addDecodedField(
+                        "prefixExtensionType",
+                        String.valueOf(prefixMap.get("extensionType")));
+            }
+        }
+
+        return hubMessages;
     }
 
     /** Parse a MessagePack map to extract Blazor-specific information. */
@@ -501,6 +659,16 @@ public class BlazorPackDecoder {
             case 3: // Completion
                 message.setMessageType(BlazorPackMessageType.COMPLETION);
                 message.addDecodedField("signalRType", "Completion");
+                addListElements(list, message);
+                break;
+            case 4: // StreamInvocation
+                message.setMessageType(BlazorPackMessageType.JS_INTEROP);
+                message.addDecodedField("signalRType", "StreamInvocation");
+                parseMessagePackInvocation(list, message);
+                break;
+            case 5: // CancelInvocation
+                message.setMessageType(BlazorPackMessageType.UNKNOWN);
+                message.addDecodedField("signalRType", "CancelInvocation");
                 addListElements(list, message);
                 break;
             case 6: // Ping
@@ -719,22 +887,28 @@ public class BlazorPackDecoder {
         if (bytes.length > MAX_TRY_DECODE_SIZE) {
             return null;
         }
-        try {
-            // Quick scan for non-printable characters before regex
-            for (int i = 0; i < bytes.length; i++) {
-                int b = bytes[i] & 0xFF;
-                if (b < 0x20 && b != 0x09 && b != 0x0A && b != 0x0D) {
-                    return null;
-                }
-                if (b > 0x7E) {
-                    return null;
-                }
+        // Phase 1: Fast ASCII scan — reject control characters and detect non-ASCII
+        boolean hasNonAscii = false;
+        for (int i = 0; i < bytes.length; i++) {
+            int b = bytes[i] & 0xFF;
+            if (b < 0x20 && b != 0x09 && b != 0x0A && b != 0x0D) {
+                return null;
             }
-            return new String(bytes, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            // Not valid UTF-8
+            if (b > 0x7E) {
+                hasNonAscii = true;
+            }
         }
-        return null;
+        // Pure ASCII with no control chars — always valid
+        if (!hasNonAscii) {
+            return new String(bytes, StandardCharsets.UTF_8);
+        }
+        // Phase 2: Non-ASCII present — decode and round-trip verify for valid UTF-8
+        String decoded = new String(bytes, StandardCharsets.UTF_8);
+        byte[] reencoded = decoded.getBytes(StandardCharsets.UTF_8);
+        if (!java.util.Arrays.equals(bytes, reencoded)) {
+            return null;
+        }
+        return decoded;
     }
 
     /** Try to parse the payload as JSON directly (for unknown binary formats). */
@@ -757,15 +931,15 @@ public class BlazorPackDecoder {
 
     /** Parse a SignalR JSON message and extract Blazor-specific data. */
     private void parseSignalRMessage(JSONObject json, BlazorPackMessage message) {
-        // Check for SignalR message types
-        if (json.has("type")) {
-            int type = json.getInt("type");
-            message.addDecodedField("signalRType", type);
-            LOGGER.debug("SignalR message type: {}", type);
+        // Cache the type value to avoid repeated parsing
+        int signalRType = json.has("type") ? json.getInt("type") : -1;
+        if (signalRType >= 0) {
+            message.addDecodedField("signalRType", signalRType);
+            LOGGER.debug("SignalR message type: {}", signalRType);
         }
 
         // Check for invocation (method calls) - SignalR type 1
-        if (json.has("type") && json.getInt("type") == 1) {
+        if (signalRType == 1) {
             parseInvocation(json, message);
             message.setMessageType(BlazorPackMessageType.JS_INTEROP);
             LOGGER.debug("Parsed as JS Interop invocation");
@@ -782,7 +956,7 @@ public class BlazorPackDecoder {
             message.addDecodedField("closeMessage", json.getString("Close"));
         }
         // Check for protocol handshake
-        else if (json.has("protocol") && json.getString("protocol").equals("blazorpack")) {
+        else if (json.has("protocol") && "blazorpack".equals(json.getString("protocol"))) {
             message.setMessageType(BlazorPackMessageType.PROTOCOL_HANDSHAKE);
             message.addDecodedField("protocol", json.getString("protocol"));
             message.addDecodedField("version", json.get("version"));
@@ -795,11 +969,11 @@ public class BlazorPackDecoder {
             message.addDecodedField("ping", true);
         }
         // Check for Completion message - SignalR type 3
-        else if (json.has("type") && json.getInt("type") == 3) {
+        else if (signalRType == 3) {
             parseCompletion(json, message);
         }
         // Check for Stream Item message - SignalR type 2
-        else if (json.has("type") && json.getInt("type") == 2) {
+        else if (signalRType == 2) {
             parseStreamItem(json, message);
         }
         // Generic message
@@ -881,34 +1055,6 @@ public class BlazorPackDecoder {
                 message.addDecodedField("dispatcher", batch.get("dispatcher"));
             }
         }
-    }
-
-    /** Check if a text message appears to be a Blazor SignalR message. */
-    private boolean isBlazorSignalRMessage(String text) {
-        // Check for common SignalR/Blazor markers
-        return text.contains("\"type\"")
-                || // SignalR message type
-                text.contains("invocation")
-                || // Method invocation
-                text.contains("renderBatch")
-                || // Blazor render batch
-                text.contains("\"Close\"")
-                || // Close message
-                text.contains("\"Ping\"")
-                || // Ping message
-                text.contains("blazor")
-                || // Blazor reference
-                text.contains("blazorpack")
-                || // Blazor Pack protocol
-                text.contains("\"protocol\"")
-                || // Protocol negotiation
-                text.contains("\"version\"")
-                || // Version field
-                text.contains("\"target\"")
-                || // Invocation target
-                text.contains("\"arguments\"")
-                || // Invocation arguments
-                text.contains("Microsoft.AspNetCore.Components.Server"); // Full namespace
     }
 
     /** Read a variable-length integer from the buffer. */

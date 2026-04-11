@@ -11,7 +11,7 @@ zapAddOn {
         author.set("CrimsonWall")
         url.set("https://github.com/crimsonwall/crimsonblazordecoder")
         extensions {
-            register("org.zaproxy.addon.crimsonblazordecoder.ExtensionCrimsonBlazorDecoder")
+            register("com.crimsonwall.crimsonblazordecoder.ExtensionCrimsonBlazorDecoder")
         }
         dependencies {
             addOns {
@@ -23,8 +23,8 @@ zapAddOn {
     }
 
     apiClientGen {
-        api.set("org.zaproxy.addon.crimsonblazordecoder.CrimsonBlazorDecoderAPI")
-        messages.set(file("src/main/resources/org/zaproxy/addon/crimsonblazordecoder/resources/Messages.properties"))
+        api.set("com.crimsonwall.crimsonblazordecoder.CrimsonBlazorDecoderAPI")
+        messages.set(file("src/main/resources/com/crimsonwall/crimsonblazordecoder/resources/Messages.properties"))
     }
 }
 
@@ -43,7 +43,7 @@ configure<com.diffplug.gradle.spotless.SpotlessExtension> {
             /*
              * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
              *
-             * Written by Renico Koen. Published by crimsonwall.com in 2026.
+             * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
              *
              * Licensed under the Apache License, Version 2.0 (the "License");
              * you may not use this file except in compliance with the License.

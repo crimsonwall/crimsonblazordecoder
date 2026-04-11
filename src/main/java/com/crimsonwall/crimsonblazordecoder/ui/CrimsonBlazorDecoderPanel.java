@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen. Published by crimsonwall.com in 2026.
+ * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.zaproxy.addon.crimsonblazordecoder.ui;
+package com.crimsonwall.crimsonblazordecoder.ui;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -27,12 +27,16 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.text.MessageFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
@@ -43,6 +47,7 @@ import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTable;
+import javax.swing.JTextArea;
 import javax.swing.JTextPane;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingConstants;
@@ -54,8 +59,8 @@ import javax.swing.text.StyleConstants;
 import javax.swing.text.StyledDocument;
 import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.extension.AbstractPanel;
-import org.zaproxy.addon.crimsonblazordecoder.ExtensionCrimsonBlazorDecoder;
-import org.zaproxy.addon.crimsonblazordecoder.decoder.BlazorPackMessage;
+import com.crimsonwall.crimsonblazordecoder.ExtensionCrimsonBlazorDecoder;
+import com.crimsonwall.crimsonblazordecoder.decoder.BlazorPackMessage;
 
 /**
  * Main UI panel for displaying decoded Blazor Pack messages.
@@ -66,13 +71,18 @@ import org.zaproxy.addon.crimsonblazordecoder.decoder.BlazorPackMessage;
 public class CrimsonBlazorDecoderPanel extends AbstractPanel {
 
     private static final long serialVersionUID = 1L;
-    private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("HH:mm:ss.SSS");
+    private static final String DATE_FORMAT_PATTERN = "HH:mm:ss.SSS";
 
     private ExtensionCrimsonBlazorDecoder extension;
     private MessageTableModel tableModel;
     private JTable messageTable;
     private JTextPane jsonView;
     private JTextPane rawView;
+    private JTextArea modifyView;
+    private JButton sendPacketButton;
+    private JLabel modifyStatusLabel;
+    private JPanel modifyPanel;
+    private boolean modifyTabVisible = false;
     private JTabbedPane detailTabbedPane;
     private BlazorPackMessage currentMessage;
     private boolean autoSelect = true;
@@ -80,10 +90,19 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
     private JButton exportButton;
     private JLabel statusLabel;
     private int messageCount = 0;
+    private volatile boolean sendInProgress = false;
+    private final java.util.concurrent.ExecutorService sendExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor(
+                    r -> {
+                        Thread t = new Thread(r, "CrimsonBlazorDecoder-Send");
+                        t.setDaemon(true);
+                        return t;
+                    });
     private final Set<Integer> markedRows = new HashSet<>();
     private static final Color COLOR_MARKED = new Color(50, 205, 50); // lime green
     private static final int MAX_JSON_DISPLAY = 50000; // Max chars for JSON view
     private static final int MAX_HEX_DISPLAY_BYTES = 4096; // Max bytes for hex dump
+    private static final int MAX_MESSAGES = 10000; // Max messages to keep in memory
 
     // JSON syntax highlighting colors (One Dark theme)
     private static final Color COLOR_KEY = new Color(224, 108, 117); // soft red
@@ -289,7 +308,6 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                         // Check if mouse is near the timestamp field
                         int offset = viewToModel(event.getPoint());
                         try {
-                            int lineStart = 0;
                             String text = getDocument().getText(0, getDocument().getLength());
                             // Find the line containing the offset
                             int ls = text.lastIndexOf('\n', offset) + 1;
@@ -316,6 +334,9 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
         JScrollPane jsonScroll = new JScrollPane(jsonView);
         tabbedPane.addTab(Constant.messages.getString("crimsonblazordecoder.tab.json"), jsonScroll);
 
+        // Modify tab — built but not added until an outgoing message is selected
+        modifyPanel = createModifyPanel();
+
         // Raw hex view
         rawView = new JTextPane();
         rawView.setEditable(false);
@@ -332,6 +353,43 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
         return panel;
     }
 
+    private JPanel createModifyPanel() {
+        JPanel panel = new JPanel(new BorderLayout(0, 4));
+        panel.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
+
+        // Editable text area with matching dark theme
+        modifyView = new JTextArea();
+        modifyView.setFont(new Font("Monospaced", Font.PLAIN, 12));
+        modifyView.setBackground(COLOR_BG);
+        modifyView.setForeground(new Color(171, 178, 191));
+        modifyView.setCaretColor(Color.WHITE);
+        modifyView.setLineWrap(false);
+        modifyView.setTabSize(2);
+        JScrollPane modifyScroll = new JScrollPane(modifyView);
+        panel.add(modifyScroll, BorderLayout.CENTER);
+
+        // Bottom bar: status label + send button
+        JPanel bottomBar = new JPanel();
+        bottomBar.setLayout(new BoxLayout(bottomBar, BoxLayout.X_AXIS));
+        bottomBar.setBorder(BorderFactory.createEmptyBorder(2, 0, 0, 0));
+
+        modifyStatusLabel = new JLabel(" ");
+        modifyStatusLabel.setFont(modifyStatusLabel.getFont().deriveFont(Font.PLAIN, 11f));
+        bottomBar.add(modifyStatusLabel);
+        bottomBar.add(Box.createHorizontalGlue());
+
+        sendPacketButton =
+                new JButton(
+                        Constant.messages.getString("crimsonblazordecoder.modify.button.send"));
+        sendPacketButton.setEnabled(false);
+        sendPacketButton.addActionListener(new SendPacketButtonListener());
+        bottomBar.add(sendPacketButton);
+
+        panel.add(bottomBar, BorderLayout.SOUTH);
+
+        return panel;
+    }
+
     private JPanel createStatusBar() {
         JPanel panel = new JPanel(new BorderLayout());
         statusLabel = new JLabel(Constant.messages.getString("crimsonblazordecoder.status.ready"));
@@ -344,6 +402,9 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
     public void addMessage(BlazorPackMessage message) {
         SwingUtilities.invokeLater(
                 () -> {
+                    if (tableModel.getRowCount() >= MAX_MESSAGES) {
+                        tableModel.removeOldest();
+                    }
                     tableModel.addMessage(message);
                     messageCount++;
                     updateStatus();
@@ -364,6 +425,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
             currentMessage = null;
             jsonView.setText("");
             rawView.setText("");
+            updateModifyView(null);
             return;
         }
 
@@ -383,13 +445,135 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
 
         highlightHexDump(currentMessage.getRawPayload());
         rawView.setCaretPosition(0);
+
+        updateModifyView(currentMessage);
+    }
+
+    /** Show or hide the Modify tab and populate it based on the currently selected message. */
+    private void updateModifyView(BlazorPackMessage message) {
+        modifyStatusLabel.setText(" ");
+
+        boolean shouldShow =
+                message != null
+                        && message.isOutgoing()
+                        && message.getRawPayload() != null
+                        && !message.getRawPayload().isEmpty();
+
+        if (shouldShow && !modifyTabVisible) {
+            detailTabbedPane.insertTab(
+                    Constant.messages.getString("crimsonblazordecoder.tab.modify"),
+                    null,
+                    modifyPanel,
+                    null,
+                    1);
+            modifyTabVisible = true;
+        } else if (!shouldShow && modifyTabVisible) {
+            if (detailTabbedPane.getSelectedComponent() == modifyPanel) {
+                detailTabbedPane.setSelectedIndex(0);
+            }
+            detailTabbedPane.remove(modifyPanel);
+            modifyTabVisible = false;
+        }
+
+        if (!shouldShow) {
+            modifyView.setText("");
+            modifyView.setEditable(false);
+            sendPacketButton.setEnabled(false);
+            return;
+        }
+
+        modifyView.setForeground(new Color(171, 178, 191));
+        modifyView.setText(prettyPrintJson(message.getRawPayload()));
+        modifyView.setCaretPosition(0);
+        modifyView.setEditable(extension.isChannelActive(message.getMessageId()));
+        sendPacketButton.setEnabled(extension.isChannelActive(message.getMessageId()));
+    }
+
+    /**
+     * Pretty-print a JSON string with 2-space indentation. No syntax colouring — just formatted
+     * text suitable for the editable Modify tab.
+     */
+    private String prettyPrintJson(String json) {
+        if (json == null || json.isEmpty()) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder();
+        int indent = 0;
+        boolean inString = false;
+        boolean escape = false;
+
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+
+            if (escape) {
+                out.append(c);
+                // Handle backslash-u-XXXX — consume all 4 hex digits as part of the escape sequence
+                if (c == 'u' && i + 4 < json.length()) {
+                    out.append(json, i + 1, i + 5);
+                    i += 4;
+                }
+                escape = false;
+                continue;
+            }
+
+            if (c == '\\' && inString) {
+                out.append(c);
+                escape = true;
+                continue;
+            }
+
+            if (c == '"') {
+                inString = !inString;
+                out.append(c);
+                continue;
+            }
+
+            if (inString) {
+                out.append(c);
+                continue;
+            }
+
+            // Outside strings — format whitespace
+            switch (c) {
+                case '{':
+                case '[':
+                    out.append(c);
+                    indent += 2;
+                    out.append('\n');
+                    out.append(" ".repeat(indent));
+                    break;
+                case '}':
+                case ']':
+                    indent -= 2;
+                    out.append('\n');
+                    out.append(" ".repeat(indent));
+                    out.append(c);
+                    break;
+                case ',':
+                    out.append(c);
+                    out.append('\n');
+                    out.append(" ".repeat(indent));
+                    break;
+                case ':':
+                    out.append(c);
+                    out.append(' ');
+                    break;
+                default:
+                    if (!Character.isWhitespace(c)) {
+                        out.append(c);
+                    }
+                    break;
+            }
+        }
+        return out.toString();
     }
 
     /**
      * Render JSON with syntax highlighting into the jsonView JTextPane.
      *
      * <p>Applies color to keys (red), string values (green), numbers (orange), booleans/null
-     * (purple), and punctuation (gray).
+     * (purple), and punctuation (gray). Batches consecutive same-type characters into a single
+     * insertString call to avoid O(n^2) document updates.
      */
     private void highlightJson(String json) {
         StyledDocument doc = jsonView.getStyledDocument();
@@ -405,45 +589,41 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
 
         int i = 0;
         int len = json.length();
+        // Segment batch buffer: accumulate text of the same style, then flush
+        StringBuilder segment = new StringBuilder(256);
+        SimpleAttributeSet currentAttr = null;
 
         while (i < len) {
             char c = json.charAt(i);
+            SimpleAttributeSet attr;
+            int advance;
 
             // Whitespace
             if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
-                appendText(doc, String.valueOf(c), attrPunct);
-                i++;
-                continue;
+                attr = attrPunct;
+                advance = 1;
             }
-
             // Structural characters
-            if (c == '{' || c == '}' || c == '[' || c == ']' || c == ':' || c == ',') {
-                appendText(doc, String.valueOf(c), attrPunct);
-                i++;
-                continue;
+            else if (c == '{' || c == '}' || c == '[' || c == ']' || c == ':' || c == ',') {
+                attr = attrPunct;
+                advance = 1;
             }
-
             // String (could be key or value)
-            if (c == '"') {
+            else if (c == '"') {
+                int start = i;
                 i++; // skip opening quote
-                StringBuilder sb = new StringBuilder();
                 while (i < len) {
                     char sc = json.charAt(i);
                     if (sc == '\\' && i + 1 < len) {
-                        sb.append(sc);
-                        sb.append(json.charAt(i + 1));
                         i += 2;
                     } else if (sc == '"') {
                         i++; // skip closing quote
                         break;
                     } else {
-                        sb.append(sc);
                         i++;
                     }
                 }
-                String content = "\"" + sb.toString() + "\"";
-
-                // A key is followed by ':'
+                // Peek ahead to check if this string is a key
                 boolean isKey = false;
                 int peek = i;
                 while (peek < len && json.charAt(peek) == ' ') {
@@ -452,52 +632,91 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                 if (peek < len && json.charAt(peek) == ':') {
                     isKey = true;
                 }
-
-                appendText(doc, content, isKey ? attrKey : attrString);
+                attr = isKey ? attrKey : attrString;
+                // Flush any pending segment with different style first
+                if (currentAttr != null && currentAttr != attr && segment.length() > 0) {
+                    appendText(doc, segment.toString(), currentAttr);
+                    segment.setLength(0);
+                }
+                currentAttr = attr;
+                segment.append(json, start, i);
                 continue;
             }
-
             // Number
-            if (c == '-' || (c >= '0' && c <= '9')) {
-                StringBuilder sb = new StringBuilder();
+            else if (c == '-' || (c >= '0' && c <= '9')) {
+                int start = i;
                 while (i < len) {
                     char nc = json.charAt(i);
-                    if (nc == '-'
-                            || nc == '+'
-                            || nc == '.'
-                            || nc == 'e'
-                            || nc == 'E'
+                    if (nc == '-' || nc == '+' || nc == '.'
+                            || nc == 'e' || nc == 'E'
                             || (nc >= '0' && nc <= '9')) {
-                        sb.append(nc);
                         i++;
                     } else {
                         break;
                     }
                 }
-                appendText(doc, sb.toString(), attrNumber);
+                attr = attrNumber;
+                if (currentAttr != null && currentAttr != attr && segment.length() > 0) {
+                    appendText(doc, segment.toString(), currentAttr);
+                    segment.setLength(0);
+                }
+                currentAttr = attr;
+                segment.append(json, start, i);
                 continue;
             }
-
             // Boolean or null
-            if (json.startsWith("true", i)) {
-                appendText(doc, "true", attrBoolNull);
+            else if (json.startsWith("true", i)) {
+                attr = attrBoolNull;
+                if (currentAttr != null && currentAttr != attr && segment.length() > 0) {
+                    appendText(doc, segment.toString(), currentAttr);
+                    segment.setLength(0);
+                }
+                currentAttr = attr;
+                segment.append("true");
                 i += 4;
                 continue;
-            }
-            if (json.startsWith("false", i)) {
-                appendText(doc, "false", attrBoolNull);
+            } else if (json.startsWith("false", i)) {
+                attr = attrBoolNull;
+                if (currentAttr != null && currentAttr != attr && segment.length() > 0) {
+                    appendText(doc, segment.toString(), currentAttr);
+                    segment.setLength(0);
+                }
+                currentAttr = attr;
+                segment.append("false");
                 i += 5;
                 continue;
-            }
-            if (json.startsWith("null", i)) {
-                appendText(doc, "null", attrBoolNull);
+            } else if (json.startsWith("null", i)) {
+                attr = attrBoolNull;
+                if (currentAttr != null && currentAttr != attr && segment.length() > 0) {
+                    appendText(doc, segment.toString(), currentAttr);
+                    segment.setLength(0);
+                }
+                currentAttr = attr;
+                segment.append("null");
                 i += 4;
                 continue;
             }
-
             // Fallback: single char
-            appendText(doc, String.valueOf(c), attrPunct);
-            i++;
+            else {
+                attr = attrPunct;
+                advance = 1;
+            }
+
+            // Batch: same style -> append to segment; different style -> flush and start new
+            if (currentAttr != attr) {
+                if (segment.length() > 0 && currentAttr != null) {
+                    appendText(doc, segment.toString(), currentAttr);
+                    segment.setLength(0);
+                }
+                currentAttr = attr;
+            }
+            segment.append(c);
+            i += advance;
+        }
+
+        // Flush remaining
+        if (segment.length() > 0 && currentAttr != null) {
+            appendText(doc, segment.toString(), currentAttr);
         }
     }
 
@@ -557,6 +776,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
     private static final Color COLOR_HEX = new Color(152, 195, 127); // green
     private static final Color COLOR_ASCII = new Color(97, 175, 239); // blue
     private static final Color COLOR_SEP = new Color(92, 99, 112); // dim gray
+    private static final char[] HEX_CHARS = "0123456789abcdef".toCharArray();
 
     {
         StyleConstants.setFontFamily(attrOffset, "Monospaced");
@@ -593,7 +813,6 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
         byte[] bytes = message.getRawBytes();
 
         if (bytes == null || bytes.length == 0) {
-            // Fall back to rawPayload string if no bytes stored
             if (rawPayload != null && !rawPayload.isEmpty()) {
                 appendText(doc, rawPayload, attrHex);
             }
@@ -610,50 +829,42 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
             // Offset column
             appendText(doc, String.format("%08x  ", rowOffset), attrOffset);
 
-            // Hex columns (two groups of 8)
-            StringBuilder leftHex = new StringBuilder();
-            StringBuilder rightHex = new StringBuilder();
-            StringBuilder ascii = new StringBuilder();
-
+            // Hex columns
+            StringBuilder hexBuf = new StringBuilder(50);
             for (int col = 0; col < bytesPerRow; col++) {
+                if (col == 8) hexBuf.append(' ');
                 int idx = rowOffset + col;
-                if (col == 8) {
-                    leftHex.append(" ");
-                }
                 if (idx < bytes.length) {
-                    String hexByte = String.format("%02x", bytes[idx] & 0xFF);
-                    if (col < 8) {
-                        leftHex.append(hexByte).append(" ");
-                    } else {
-                        rightHex.append(hexByte).append(" ");
-                    }
-                    char c = (char) (bytes[idx] & 0xFF);
-                    ascii.append(c >= 0x20 && c < 0x7f ? c : '.');
+                    int b = bytes[idx] & 0xFF;
+                    hexBuf.append(HEX_CHARS[(b >> 4) & 0x0F]);
+                    hexBuf.append(HEX_CHARS[b & 0x0F]);
+                    hexBuf.append(' ');
                 } else {
-                    if (col < 8) {
-                        leftHex.append("   ");
-                    } else {
-                        rightHex.append("   ");
-                    }
-                    ascii.append(' ');
+                    hexBuf.append("   ");
                 }
             }
+            hexBuf.append(' ').append('|');
+            appendText(doc, hexBuf.toString(), attrHex);
 
-            appendText(doc, leftHex.toString(), attrHex);
-            appendText(doc, " ", attrSeparator);
-            appendText(doc, rightHex.toString(), attrHex);
-            appendText(doc, " |", attrSeparator);
-            appendText(doc, ascii.toString(), attrAscii);
-            appendText(doc, "|\n", attrSeparator);
+            // ASCII column
+            StringBuilder asciiBuf = new StringBuilder(17);
+            for (int col = 0; col < bytesPerRow; col++) {
+                int idx = rowOffset + col;
+                if (idx < bytes.length) {
+                    int b = bytes[idx] & 0xFF;
+                    asciiBuf.append(b >= 0x20 && b < 0x7f ? (char) b : '.');
+                } else {
+                    asciiBuf.append(' ');
+                }
+            }
+            asciiBuf.append('|').append('\n');
+            appendText(doc, asciiBuf.toString(), attrAscii);
         }
 
-        // Footer with total length
+        // Footer
         if (displayBytes < bytes.length) {
-            appendText(
-                    doc,
-                    String.format(
-                            "%n%d of %d bytes shown (truncated)%n", displayBytes, bytes.length),
-                    attrOffset);
+            appendText(doc, String.format(
+                    "%n%d of %d bytes shown (truncated)%n", displayBytes, bytes.length), attrOffset);
         } else {
             appendText(doc, String.format("%n%d bytes total%n", bytes.length), attrOffset);
         }
@@ -701,7 +912,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
 
             switch (columnIndex) {
                 case 0: // Time
-                    return DATE_FORMAT.format(new Date(message.getTimestamp()));
+                    return new SimpleDateFormat(DATE_FORMAT_PATTERN).format(new Date(message.getTimestamp()));
                 case 1: // Type
                     return message.getMessageType().toString();
                 case 2: // Direction
@@ -748,6 +959,21 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
             fireTableRowsInserted(messages.size() - 1, messages.size() - 1);
         }
 
+        public void removeOldest() {
+            if (!messages.isEmpty()) {
+                messages.remove(0);
+                markedRows.remove(0);
+                // Shift all marked indices down by 1
+                Set<Integer> shifted = new HashSet<>();
+                for (Integer idx : markedRows) {
+                    shifted.add(idx - 1);
+                }
+                markedRows.clear();
+                markedRows.addAll(shifted);
+                fireTableRowsDeleted(0, 0);
+            }
+        }
+
         public BlazorPackMessage getMessageAt(int row) {
             return messages.get(row);
         }
@@ -762,6 +988,9 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
     private class MessageTableCellRenderer extends DefaultTableCellRenderer {
 
         private static final long serialVersionUID = 1L;
+        private final Color COLOR_RENDER_BATCH = new Color(200, 230, 255);
+        private final Color COLOR_JS_INTEROP = new Color(200, 255, 200);
+        private final Color COLOR_ERROR_BG = new Color(255, 200, 200);
 
         @Override
         public Component getTableCellRendererComponent(
@@ -777,10 +1006,8 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                             table, value, isSelected, hasFocus, row, column);
 
             if (!isSelected) {
-                // Color code by message type
                 int modelRow = table.convertRowIndexToModel(row);
 
-                // Marked rows take priority
                 if (markedRows.contains(modelRow)) {
                     c.setBackground(COLOR_MARKED);
                 } else {
@@ -788,13 +1015,13 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
 
                     switch (message.getMessageType()) {
                         case RENDER_BATCH:
-                            c.setBackground(new Color(200, 230, 255));
+                            c.setBackground(COLOR_RENDER_BATCH);
                             break;
                         case JS_INTEROP:
-                            c.setBackground(new Color(200, 255, 200));
+                            c.setBackground(COLOR_JS_INTEROP);
                             break;
                         case ERROR:
-                            c.setBackground(new Color(255, 200, 200));
+                            c.setBackground(COLOR_ERROR_BG);
                             break;
                         default:
                             c.setBackground(Color.WHITE);
@@ -825,9 +1052,81 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                 messageCount = 0;
                 autoSelect = true;
                 markedRows.clear();
+                currentMessage = null;
                 updateStatus();
                 jsonView.setText("");
+                updateModifyView(null);
             }
+        }
+    }
+
+    /** Action listener for the Send to Server button in the Modify tab. */
+    private class SendPacketButtonListener implements ActionListener {
+
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            if (currentMessage == null || !currentMessage.isOutgoing()) {
+                return;
+            }
+
+            String editedJson = modifyView.getText().trim();
+            if (editedJson.isEmpty()) {
+                modifyStatusLabel.setForeground(Color.RED);
+                modifyStatusLabel.setText(
+                        Constant.messages.getString(
+                                "crimsonblazordecoder.modify.send.parseerror", "empty input"));
+                return;
+            }
+
+            sendPacketButton.setEnabled(false);
+            sendInProgress = true;
+            modifyStatusLabel.setForeground(new Color(171, 178, 191));
+            modifyStatusLabel.setText("Sending...");
+
+            int channelId = currentMessage.getMessageId();
+            boolean isBinary = currentMessage.isBinary();
+
+            sendExecutor.submit(
+                    () -> {
+                        String statusText;
+                        Color statusColor;
+                        try {
+                            extension.sendModifiedPacket(channelId, editedJson, isBinary);
+                            statusText =
+                                    Constant.messages.getString(
+                                            "crimsonblazordecoder.modify.send.success");
+                            statusColor = new Color(152, 195, 127); // green
+                        } catch (IllegalStateException ex) {
+                            statusText =
+                                    Constant.messages.getString(
+                                            "crimsonblazordecoder.modify.send.noconnection");
+                            statusColor = Color.RED;
+                        } catch (IllegalArgumentException ex) {
+                            statusText =
+                                    MessageFormat.format(
+                                            Constant.messages.getString(
+                                                    "crimsonblazordecoder.modify.send.parseerror"),
+                                            ex.getMessage());
+                            statusColor = Color.RED;
+                        } catch (Exception ex) {
+                            statusText =
+                                    MessageFormat.format(
+                                            Constant.messages.getString(
+                                                    "crimsonblazordecoder.modify.send.error"),
+                                            ex.getMessage());
+                            statusColor = Color.RED;
+                        }
+
+                        final String finalStatus = statusText;
+                        final Color finalColor = statusColor;
+                        SwingUtilities.invokeLater(
+                                () -> {
+                                    modifyStatusLabel.setForeground(finalColor);
+                                    modifyStatusLabel.setText(finalStatus);
+                                    sendInProgress = false;
+                                    sendPacketButton.setEnabled(true);
+                                });
+                    });
         }
     }
 
@@ -841,7 +1140,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                 JOptionPane.showMessageDialog(
                         CrimsonBlazorDecoderPanel.this,
                         Constant.messages.getString("crimsonblazordecoder.export.noselection"),
-                        "Export",
+                        Constant.messages.getString("crimsonblazordecoder.export.dialog.title"),
                         JOptionPane.WARNING_MESSAGE);
                 return;
             }
@@ -851,8 +1150,10 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
             boolean isJsonTab = detailTabbedPane.getSelectedIndex() == 0;
 
             javax.swing.JFileChooser fileChooser = new javax.swing.JFileChooser();
+            String exportTitle = Constant.messages.getString("crimsonblazordecoder.export.dialog.title");
             if (isJsonTab) {
-                fileChooser.setDialogTitle("Export Message as JSON");
+                fileChooser.setDialogTitle(
+                        Constant.messages.getString("crimsonblazordecoder.export.json.title"));
                 fileChooser.setSelectedFile(
                         new java.io.File(
                                 "blazor_message_"
@@ -861,9 +1162,12 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                                         + message.getTimestamp()
                                         + ".json"));
                 fileChooser.setFileFilter(
-                        new javax.swing.filechooser.FileNameExtensionFilter("JSON files", "json"));
+                        new javax.swing.filechooser.FileNameExtensionFilter(
+                                Constant.messages.getString("crimsonblazordecoder.export.extension.json"),
+                                "json"));
             } else {
-                fileChooser.setDialogTitle("Export Raw Binary Data");
+                fileChooser.setDialogTitle(
+                        Constant.messages.getString("crimsonblazordecoder.export.raw.title"));
                 fileChooser.setSelectedFile(
                         new java.io.File(
                                 "blazor_message_"
@@ -873,7 +1177,8 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                                         + ".raw"));
                 fileChooser.setFileFilter(
                         new javax.swing.filechooser.FileNameExtensionFilter(
-                                "Raw binary files", "raw"));
+                                Constant.messages.getString("crimsonblazordecoder.export.extension.raw"),
+                                "raw"));
             }
 
             int userSelection = fileChooser.showSaveDialog(CrimsonBlazorDecoderPanel.this);
@@ -888,14 +1193,18 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                         writer.write(message.toPrettyJson());
                         JOptionPane.showMessageDialog(
                                 CrimsonBlazorDecoderPanel.this,
-                                "Message exported to " + file.getName(),
-                                "Export",
+                                MessageFormat.format(
+                                        Constant.messages.getString("crimsonblazordecoder.export.success"),
+                                        file.getName()),
+                                exportTitle,
                                 JOptionPane.INFORMATION_MESSAGE);
                     } catch (Exception ex) {
                         JOptionPane.showMessageDialog(
                                 CrimsonBlazorDecoderPanel.this,
-                                "Export failed: " + ex.getMessage(),
-                                "Export Error",
+                                MessageFormat.format(
+                                        Constant.messages.getString("crimsonblazordecoder.export.failed"),
+                                        ex.getMessage()),
+                                Constant.messages.getString("crimsonblazordecoder.export.error.title"),
                                 JOptionPane.ERROR_MESSAGE);
                     }
                 } else {
@@ -906,8 +1215,8 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                     if (rawBytes == null) {
                         JOptionPane.showMessageDialog(
                                 CrimsonBlazorDecoderPanel.this,
-                                "No raw binary data available for this message",
-                                "Export Error",
+                                Constant.messages.getString("crimsonblazordecoder.export.norawdata"),
+                                Constant.messages.getString("crimsonblazordecoder.export.error.title"),
                                 JOptionPane.WARNING_MESSAGE);
                         return;
                     }
@@ -915,14 +1224,18 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                         fos.write(rawBytes);
                         JOptionPane.showMessageDialog(
                                 CrimsonBlazorDecoderPanel.this,
-                                "Raw data exported to " + file.getName(),
-                                "Export",
+                                MessageFormat.format(
+                                        Constant.messages.getString("crimsonblazordecoder.export.success"),
+                                        file.getName()),
+                                exportTitle,
                                 JOptionPane.INFORMATION_MESSAGE);
                     } catch (Exception ex) {
                         JOptionPane.showMessageDialog(
                                 CrimsonBlazorDecoderPanel.this,
-                                "Export failed: " + ex.getMessage(),
-                                "Export Error",
+                                MessageFormat.format(
+                                        Constant.messages.getString("crimsonblazordecoder.export.failed"),
+                                        ex.getMessage()),
+                                Constant.messages.getString("crimsonblazordecoder.export.error.title"),
                                 JOptionPane.ERROR_MESSAGE);
                     }
                 }

@@ -8,10 +8,6 @@ plugins {
     alias(libs.plugins.zaproxy.common)
 }
 
-// Path to a local zap-extensions checkout. Override with -PzapExtensionsDir=<path>.
-val zapExtensionsDir: String = findProperty("zapExtensionsDir") as String?
-    ?: "../zap-extensions"
-
 description = "Decodes and displays Blazor Pack messages sent over WebSockets in pretty-printed JSON."
 
 zapAddOn {
@@ -23,7 +19,7 @@ zapAddOn {
         author.set("CrimsonWall")
         url.set("https://github.com/crimsonwall/crimsonblazordecoder")
         extensions {
-            register("org.zaproxy.addon.crimsonblazordecoder.ExtensionCrimsonBlazorDecoder")
+            register("com.crimsonwall.crimsonblazordecoder.ExtensionCrimsonBlazorDecoder")
         }
         dependencies {
             addOns {
@@ -35,8 +31,8 @@ zapAddOn {
     }
 
     apiClientGen {
-        api.set("org.zaproxy.addon.crimsonblazordecoder.CrimsonBlazorDecoderAPI")
-        messages.set(file("src/main/resources/org/zaproxy/addon/crimsonblazordecoder/resources/Messages.properties"))
+        api.set("com.crimsonwall.crimsonblazordecoder.CrimsonBlazorDecoderAPI")
+        messages.set(file("src/main/resources/com/crimsonwall/crimsonblazordecoder/resources/Messages.properties"))
     }
 }
 
@@ -58,7 +54,7 @@ tasks.withType<JavaCompile>().configureEach {
 
 dependencies {
     compileOnly("org.zaproxy:zap:2.17.0")
-    compileOnly(files("$zapExtensionsDir/addOns/websocket/build/libs/websocket-37.jar"))
+    compileOnly(files("../zap-extensions/addOns/websocket/build/libs/websocket-37.jar"))
     compileOnly("biz.aQute.bnd:biz.aQute.bnd.annotation:7.2.3")
     compileOnly("com.google.code.findbugs:findbugs-annotations:3.0.1")
 }
@@ -71,7 +67,7 @@ spotless {
             /*
              * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
              *
-             * Written by Renico Koen. Published by crimsonwall.com in 2026.
+             * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
              *
              * Licensed under the Apache License, Version 2.0 (the "License");
              * you may not use this file except in compliance with the License.

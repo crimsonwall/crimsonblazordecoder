@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen. Published by crimsonwall.com in 2026.
+ * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.zaproxy.addon.crimsonblazordecoder.decoder;
+package com.crimsonwall.crimsonblazordecoder.decoder;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -584,7 +584,9 @@ public class MessagePackDecoder {
                     Map<String, Object> result = new HashMap<>();
                     result.put("extensionType", type);
                     if (decoded instanceof Map) {
-                        result.putAll((Map<String, Object>) decoded);
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> decodedMap = (Map<String, Object>) decoded;
+                        result.putAll(decodedMap);
                     } else if (decoded instanceof List) {
                         result.put("array", decoded);
                     } else {
@@ -647,6 +649,15 @@ public class MessagePackDecoder {
     /**
      * Converts a decoded MessagePack object to a JSON-like string representation.
      *
+     * <p>byte[] values are encoded using the {"$bin": "hexstring"} format so they round-trip
+     * correctly through JSON. This format is recognized by {@link
+     * BlazorPackEncoder#parseJson}.
+     *
+     * <p>List values that appear to be Blazor serializations of JSON strings (arrays containing
+     * only primitive types and maps) are encoded as JSON strings using the {"$json": "..."}
+     * format. This prevents them from being round-tripped as actual arrays and preserves the
+     * original string representation.
+     *
      * @param obj the decoded object (Map, List, String, Number, Boolean, byte[], or null)
      * @return a JSON-formatted string representation
      */
@@ -662,11 +673,75 @@ public class MessagePackDecoder {
         } else if (obj instanceof Map) {
             return mapToJson((Map<?, ?>) obj);
         } else if (obj instanceof List) {
-            return listToJson((List<?>) obj);
+            // Check if this list looks like a Blazor-serialized JSON string
+            List<?> list = (List<?>) obj;
+            if (looksLikeJsonString(list)) {
+                // Convert to JSON string and wrap in special format
+                String jsonStr = listToJson(list);
+                return "{\"$json\":\"" + DecoderUtils.escapeJson(jsonStr) + "\"}";
+            }
+            return listToJson(list);
         } else if (obj instanceof byte[]) {
-            return "\"" + DecoderUtils.bytesToHex((byte[]) obj) + "\"";
+            // Use {"$bin": "hexstring"} format for binary data so it round-trips correctly
+            return "{\"$bin\":\"" + DecoderUtils.bytesToHex((byte[]) obj) + "\"}";
         }
         return "\"" + obj.toString() + "\"";
+    }
+
+    /**
+     * Check if a list appears to be a Blazor-serialized JSON string.
+     *
+     * <p>Blazor serializes JSON strings as MessagePack arrays. We detect this by checking if the
+     * list contains only primitive types (numbers, strings, booleans, null) and maps with string
+     * keys - essentially anything that could be represented in JSON.
+     *
+     * @param list the list to check
+     * @return true if this looks like a serialized JSON string
+     */
+    private boolean looksLikeJsonString(List<?> list) {
+        // Must have at least one element
+        if (list.isEmpty()) {
+            return false;
+        }
+
+        // Check all elements
+        for (Object item : list) {
+            if (item == null || item instanceof String || item instanceof Number
+                    || item instanceof Boolean) {
+                // Primitive JSON type - OK
+                continue;
+            }
+            if (item instanceof List) {
+                // Nested list - recursively check
+                if (!looksLikeJsonString((List<?>) item)) {
+                    return false;
+                }
+                continue;
+            }
+            if (item instanceof Map) {
+                // Map - check if it can be represented in JSON
+                @SuppressWarnings("unchecked")
+                Map<?, ?> map = (Map<?, ?>) item;
+                for (Map.Entry<?, ?> entry : map.entrySet()) {
+                    // Keys must be strings (or convertible to strings)
+                    if (!(entry.getKey() instanceof String)) {
+                        return false;
+                    }
+                    // Values must be JSON-serializable
+                    Object value = entry.getValue();
+                    if (value instanceof byte[]) {
+                        // byte[] would be serialized as hex, not native JSON
+                        return false;
+                    }
+                }
+                continue;
+            }
+            // Any other type (e.g., byte[]) means this is NOT a JSON string
+            return false;
+        }
+
+        // All elements are JSON-serializable primitives
+        return true;
     }
 
     private String mapToJson(Map<?, ?> map) {
@@ -687,9 +762,18 @@ public class MessagePackDecoder {
             } else if (value instanceof Map) {
                 sb.append(mapToJson((Map<?, ?>) value));
             } else if (value instanceof List) {
-                sb.append(listToJson((List<?>) value));
+                List<?> list = (List<?>) value;
+                if (looksLikeJsonString(list)) {
+                    // Wrap in $json format to preserve it as a JSON string
+                    sb.append("{\"$json\":\"")
+                            .append(DecoderUtils.escapeJson(listToJson(list)))
+                            .append("\"}");
+                } else {
+                    sb.append(listToJson(list));
+                }
             } else if (value instanceof byte[]) {
-                sb.append("\"").append(DecoderUtils.bytesToHex((byte[]) value)).append("\"");
+                // Use {"$bin": "hexstring"} format for binary data so it round-trips correctly
+                sb.append("{\"$bin\":\"").append(DecoderUtils.bytesToHex((byte[]) value)).append("\"}");
             } else {
                 sb.append(toJsonString(value));
             }
@@ -712,9 +796,18 @@ public class MessagePackDecoder {
             } else if (item instanceof Map) {
                 sb.append(mapToJson((Map<?, ?>) item));
             } else if (item instanceof List) {
-                sb.append(listToJson((List<?>) item));
+                List<?> nestedList = (List<?>) item;
+                if (looksLikeJsonString(nestedList)) {
+                    // Wrap in $json format to preserve it as a JSON string
+                    sb.append("{\"$json\":\"")
+                            .append(DecoderUtils.escapeJson(listToJson(nestedList)))
+                            .append("\"}");
+                } else {
+                    sb.append(listToJson(nestedList));
+                }
             } else if (item instanceof byte[]) {
-                sb.append("\"").append(DecoderUtils.bytesToHex((byte[]) item)).append("\"");
+                // Use {"$bin": "hexstring"} format for binary data so it round-trips correctly
+                sb.append("{\"$bin\":\"").append(DecoderUtils.bytesToHex((byte[]) item)).append("\"}");
             } else {
                 sb.append(toJsonString(item));
             }

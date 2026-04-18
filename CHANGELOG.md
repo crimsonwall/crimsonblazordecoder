@@ -2,7 +2,7 @@
 
 All notable changes to this add-on will be documented in this file.
 
-## 1.0.0 - 2026-04-13
+## 1.0.0 - 2026-04-18
 
 ### Added
 - RegEx tab for defining regex rules matched against decoded message payloads

@@ -28,9 +28,11 @@ import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.text.MessageFormat;
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -38,6 +40,7 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
@@ -48,12 +51,16 @@ import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
+import javax.swing.JTextField;
 import javax.swing.JTextPane;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.TableCellEditor;
+import javax.swing.table.TableCellRenderer;
+import javax.swing.AbstractCellEditor;
 import javax.swing.text.SimpleAttributeSet;
 import javax.swing.text.StyleConstants;
 import javax.swing.text.StyledDocument;
@@ -61,6 +68,8 @@ import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.extension.AbstractPanel;
 import com.crimsonwall.crimsonblazordecoder.ExtensionCrimsonBlazorDecoder;
 import com.crimsonwall.crimsonblazordecoder.decoder.BlazorPackMessage;
+import com.crimsonwall.crimsonblazordecoder.regex.RegexConfig;
+import com.crimsonwall.crimsonblazordecoder.regex.RegexEntry;
 
 /**
  * Main UI panel for displaying decoded Blazor Pack messages.
@@ -89,7 +98,6 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
     private JButton clearButton;
     private JButton exportButton;
     private JLabel statusLabel;
-    private int messageCount = 0;
     private volatile boolean sendInProgress = false;
     private final java.util.concurrent.ExecutorService sendExecutor =
             java.util.concurrent.Executors.newSingleThreadExecutor(
@@ -99,10 +107,18 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                         return t;
                     });
     private final Set<Integer> markedRows = new HashSet<>();
+    private final Set<Integer> regexMatchedRows = new HashSet<>();
+    private final java.util.Map<Integer, java.util.Set<String>> regexMatchDetails = new java.util.HashMap<>();
     private static final Color COLOR_MARKED = new Color(50, 205, 50); // lime green
+    private static final Color COLOR_REGEX_MATCH = Color.YELLOW;
     private static final int MAX_JSON_DISPLAY = 50000; // Max chars for JSON view
     private static final int MAX_HEX_DISPLAY_BYTES = 4096; // Max bytes for hex dump
     private static final int MAX_MESSAGES = 10000; // Max messages to keep in memory
+    private static final int MAX_REGEX_RULES = 100; // Max regex rules allowed
+    private static final int MAX_REGEX_INPUT = 5000; // Max chars of payload to match against
+    private static final int MAX_REGEX_CHAR_ACCESSES = 100_000; // Character access budget per pattern
+    private static final DateTimeFormatter DATE_FORMAT =
+            DateTimeFormatter.ofPattern(DATE_FORMAT_PATTERN).withZone(ZoneId.systemDefault());
 
     // JSON syntax highlighting colors (One Dark theme)
     private static final Color COLOR_KEY = new Color(224, 108, 117); // soft red
@@ -122,6 +138,12 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
         this.extension = extension;
         initAttributes();
         initialize();
+        setIcon(ExtensionCrimsonBlazorDecoder.getIcon());
+    }
+
+    /** Release resources held by this panel. Call during extension unload. */
+    public void cleanup() {
+        sendExecutor.shutdownNow();
     }
 
     private void initAttributes() {
@@ -183,11 +205,13 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
 
         JPanel buttonPanel = new JPanel();
         clearButton = new JButton(Constant.messages.getString("crimsonblazordecoder.button.clear"));
+        clearButton.setToolTipText(Constant.messages.getString("crimsonblazordecoder.button.clear.tooltip"));
         clearButton.addActionListener(new ClearButtonListener());
         buttonPanel.add(clearButton);
 
         exportButton =
                 new JButton(Constant.messages.getString("crimsonblazordecoder.button.export"));
+        exportButton.setToolTipText(Constant.messages.getString("crimsonblazordecoder.button.export.tooltip"));
         exportButton.addActionListener(new ExportButtonListener());
         buttonPanel.add(exportButton);
 
@@ -204,7 +228,20 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
         panel.add(label, BorderLayout.NORTH);
 
         tableModel = new MessageTableModel();
-        messageTable = new JTable(tableModel);
+        messageTable =
+                new JTable(tableModel) {
+                    private static final long serialVersionUID = 1L;
+
+                    @Override
+                    public String getToolTipText(java.awt.event.MouseEvent event) {
+                        int row = rowAtPoint(event.getPoint());
+                        if (row < 0) return null;
+                        int modelRow = convertRowIndexToModel(row);
+                        java.util.Set<String> matches = regexMatchDetails.get(modelRow);
+                        if (matches == null || matches.isEmpty()) return null;
+                        return "Regex match: " + String.join(", ", matches);
+                    }
+                };
         messageTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         messageTable.setAutoCreateRowSorter(true);
         messageTable.setDefaultRenderer(Object.class, new MessageTableCellRenderer());
@@ -239,7 +276,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
 
     private void addTablePopupMenu() {
         JPopupMenu popup = new JPopupMenu();
-        JMenuItem markItem = new JMenuItem("Mark");
+        JMenuItem markItem = new JMenuItem(Constant.messages.getString("crimsonblazordecoder.popup.mark"));
         popup.add(markItem);
 
         messageTable.addMouseListener(
@@ -266,7 +303,8 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
 
                         popup.removeAll();
                         if (isMarked) {
-                            JMenuItem unmarkItem = new JMenuItem("Unmark");
+                            JMenuItem unmarkItem = new JMenuItem(
+                                    Constant.messages.getString("crimsonblazordecoder.popup.unmark"));
                             unmarkItem.addActionListener(
                                     ev -> {
                                         markedRows.remove(modelRow);
@@ -274,7 +312,8 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                                     });
                             popup.add(unmarkItem);
                         } else {
-                            JMenuItem mark = new JMenuItem("Mark");
+                            JMenuItem mark = new JMenuItem(
+                                    Constant.messages.getString("crimsonblazordecoder.popup.mark"));
                             mark.addActionListener(
                                     ev -> {
                                         markedRows.add(modelRow);
@@ -317,10 +356,13 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                             Matcher m = timestampPattern.matcher(line);
                             if (m.find()) {
                                 long epoch = Long.parseLong(m.group(1));
-                                Date date = new Date(epoch);
-                                SimpleDateFormat fullFormat =
-                                        new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
-                                return epoch + " = " + fullFormat.format(date);
+                                DateTimeFormatter fullFormat =
+                                        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
+                                                .withZone(ZoneId.systemDefault());
+                                return (epoch + " = " + fullFormat.format(Instant.ofEpochMilli(epoch)))
+                                        .replace("&", "&amp;")
+                                        .replace("<", "&lt;")
+                                        .replace(">", "&gt;");
                             }
                         } catch (Exception e) {
                             // ignore
@@ -333,6 +375,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
         jsonView.setCaretColor(Color.WHITE);
         JScrollPane jsonScroll = new JScrollPane(jsonView);
         tabbedPane.addTab(Constant.messages.getString("crimsonblazordecoder.tab.json"), jsonScroll);
+        tabbedPane.setToolTipTextAt(0, Constant.messages.getString("crimsonblazordecoder.tab.json.tooltip"));
 
         // Modify tab — built but not added until an outgoing message is selected
         modifyPanel = createModifyPanel();
@@ -344,6 +387,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
         rawView.setCaretColor(Color.WHITE);
         JScrollPane rawScroll = new JScrollPane(rawView);
         tabbedPane.addTab(Constant.messages.getString("crimsonblazordecoder.tab.raw"), rawScroll);
+        tabbedPane.setToolTipTextAt(1, Constant.messages.getString("crimsonblazordecoder.tab.raw.tooltip"));
 
         addCopyPopup(jsonView);
         addCopyPopup(rawView);
@@ -381,6 +425,8 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
         sendPacketButton =
                 new JButton(
                         Constant.messages.getString("crimsonblazordecoder.modify.button.send"));
+        sendPacketButton.setToolTipText(
+                Constant.messages.getString("crimsonblazordecoder.modify.button.send.tooltip"));
         sendPacketButton.setEnabled(false);
         sendPacketButton.addActionListener(new SendPacketButtonListener());
         bottomBar.add(sendPacketButton);
@@ -406,7 +452,15 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                         tableModel.removeOldest();
                     }
                     tableModel.addMessage(message);
-                    messageCount++;
+
+                    // Check regex matches for the newly added row
+                    int modelRow = tableModel.getRowCount() - 1;
+                    java.util.Set<String> matches = findRegexMatches(message);
+                    if (!matches.isEmpty()) {
+                        regexMatchedRows.add(modelRow);
+                        regexMatchDetails.put(modelRow, matches);
+                    }
+
                     updateStatus();
 
                     if (autoSelect) {
@@ -441,6 +495,10 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                             + " chars total)";
         }
         highlightJson(json);
+        // Only highlight regex matches in the JSON text if the row is flagged as a match
+        if (regexMatchedRows.contains(modelRow)) {
+            highlightRegexMatches(json);
+        }
         jsonView.setCaretPosition(0);
 
         highlightHexDump(currentMessage.getRawPayload());
@@ -464,7 +522,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                     Constant.messages.getString("crimsonblazordecoder.tab.modify"),
                     null,
                     modifyPanel,
-                    null,
+                    Constant.messages.getString("crimsonblazordecoder.tab.modify.tooltip"),
                     1);
             modifyTabVisible = true;
         } else if (!shouldShow && modifyTabVisible) {
@@ -544,7 +602,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                     break;
                 case '}':
                 case ']':
-                    indent -= 2;
+                    indent = Math.max(0, indent - 2);
                     out.append('\n');
                     out.append(" ".repeat(indent));
                     out.append(c);
@@ -723,7 +781,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
     /** Install a right-click context menu with Copy on a JTextPane. */
     private void addCopyPopup(JTextPane textPane) {
         JPopupMenu popup = new JPopupMenu();
-        JMenuItem copyItem = new JMenuItem("Copy");
+        JMenuItem copyItem = new JMenuItem(Constant.messages.getString("crimsonblazordecoder.popup.copy"));
         copyItem.addActionListener(
                 e -> {
                     String selected = textPane.getSelectedText();
@@ -764,6 +822,91 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
         } catch (Exception e) {
             // ignore
         }
+    }
+
+    /** Attribute set for regex match background highlight (yellow, preserves existing foreground). */
+    private static final SimpleAttributeSet attrRegexHighlight = new SimpleAttributeSet();
+
+    static {
+        StyleConstants.setBackground(attrRegexHighlight, COLOR_REGEX_MATCH);
+    }
+
+    /**
+     * Apply yellow background highlighting to regex matches in the displayed JSON.
+     *
+     * <p>Only matches within the structured {@code "data"} section are highlighted — metadata fields
+     * ({@code timestamp}, {@code messageId}, {@code rawPayload}, etc.) are excluded to avoid false
+     * positives (e.g., credit card regex matching epoch timestamps).
+     */
+    private void highlightRegexMatches(String displayedJson) {
+        if (currentMessage == null) return;
+
+        // Find the "data": { ... } section in the displayed JSON
+        int dataKeyIdx = displayedJson.indexOf("\"data\":");
+        if (dataKeyIdx < 0) return;
+        int sectionStart = displayedJson.indexOf('{', dataKeyIdx);
+        if (sectionStart < 0) return;
+        int sectionEnd = findMatchingBrace(displayedJson, sectionStart);
+        if (sectionEnd < 0) return;
+
+        String dataSection = displayedJson.substring(sectionStart, sectionEnd + 1);
+
+        StyledDocument doc = jsonView.getStyledDocument();
+        boolean outgoing = currentMessage.isOutgoing();
+
+        List<RegexEntry> entries = outgoing
+            ? extension.getRegexConfig().getActiveC2SEntries()
+            : extension.getRegexConfig().getActiveS2CEntries();
+
+        for (RegexEntry entry : entries) {
+            Pattern p = entry.getCompiledPattern();
+            if (p == null) continue;
+
+            try {
+                CharSequence bounded = new BoundedCharSequence(dataSection, MAX_REGEX_CHAR_ACCESSES);
+                Matcher m = p.matcher(bounded);
+                while (m.find()) {
+                    int start = sectionStart + m.start();
+                    int end = sectionStart + m.end();
+                    if (start >= 0 && end > start && end <= doc.getLength()) {
+                        doc.setCharacterAttributes(start, end - start, attrRegexHighlight, false);
+                    }
+                }
+            } catch (IllegalStateException e) {
+                // Character budget exceeded — skip this pattern
+            } catch (Exception e) {
+                // Other errors — skip
+            }
+        }
+    }
+
+    /** Find the index of the closing brace that matches the opening brace at {@code openIdx}. */
+    private static int findMatchingBrace(String text, int openIdx) {
+        int depth = 0;
+        boolean inString = false;
+        boolean escape = false;
+        for (int i = openIdx; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (escape) {
+                escape = false;
+                continue;
+            }
+            if (c == '\\' && inString) {
+                escape = true;
+                continue;
+            }
+            if (c == '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) continue;
+            if (c == '{') depth++;
+            else if (c == '}') {
+                depth--;
+                if (depth == 0) return i;
+            }
+        }
+        return -1;
     }
 
     // Hex dump attribute sets
@@ -873,7 +1016,96 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
     /** Update the status label. */
     private void updateStatus() {
         statusLabel.setText(
-                Constant.messages.getString("crimsonblazordecoder.status.messages", messageCount));
+                Constant.messages.getString(
+                        "crimsonblazordecoder.status.messages", tableModel.getRowCount()));
+    }
+
+    /**
+     * Check if a decoded message matches any active regex rule.
+     *
+     * <p>Safeguards against catastrophic backtracking:
+     * <ul>
+     *   <li>Input is truncated to {@link #MAX_REGEX_INPUT} characters</li>
+     *   <li>Each pattern match is wrapped in a {@link BoundedCharSequence} that throws
+     *       after {@link #MAX_REGEX_CHAR_ACCESSES} character reads</li>
+     *   <li>Any exception from a single pattern is caught and skipped</li>
+     * </ul>
+     *
+     * @return the set of matching rule names, or an empty set if none matched
+     */
+    private java.util.Set<String> findRegexMatches(BlazorPackMessage message) {
+        java.util.Set<String> matched = new java.util.LinkedHashSet<>();
+        String json = message.toDecodedJson();
+        if (json == null || json.isEmpty()) {
+            return matched;
+        }
+
+        // Truncate input to bound overall match cost
+        if (json.length() > MAX_REGEX_INPUT) {
+            json = json.substring(0, MAX_REGEX_INPUT);
+        }
+
+        boolean outgoing = message.isOutgoing();
+        List<RegexEntry> entries = outgoing
+            ? extension.getRegexConfig().getActiveC2SEntries()
+            : extension.getRegexConfig().getActiveS2CEntries();
+
+        for (RegexEntry entry : entries) {
+            Pattern p = entry.getCompiledPattern();
+            if (p == null) {
+                continue;
+            }
+            try {
+                CharSequence bounded =
+                        new BoundedCharSequence(json, MAX_REGEX_CHAR_ACCESSES);
+                if (p.matcher(bounded).find()) {
+                    matched.add(entry.getName());
+                }
+            } catch (IllegalStateException e) {
+                // Character access budget exceeded — pattern is too expensive, skip
+            } catch (Exception e) {
+                // Other regex errors (StackOverflowError, etc.) — skip
+            }
+        }
+        return matched;
+    }
+
+    /**
+     * A CharSequence wrapper that throws {@link IllegalStateException} after a configured number
+     * of {@link #charAt} accesses. This prevents catastrophic backtracking in regex engines from
+     * freezing the UI — once the budget is exhausted the match fails fast.
+     */
+    private static class BoundedCharSequence implements CharSequence {
+        private final String delegate;
+        private final java.util.concurrent.atomic.AtomicInteger remaining;
+
+        BoundedCharSequence(String delegate, int accessLimit) {
+            this.delegate = delegate;
+            this.remaining = new java.util.concurrent.atomic.AtomicInteger(accessLimit);
+        }
+
+        private BoundedCharSequence(String delegate, java.util.concurrent.atomic.AtomicInteger accessBudget) {
+            this.delegate = delegate;
+            this.remaining = accessBudget;
+        }
+
+        @Override
+        public int length() {
+            return delegate.length();
+        }
+
+        @Override
+        public char charAt(int index) {
+            if (remaining.decrementAndGet() < 0) {
+                throw new IllegalStateException("Regex character access limit exceeded");
+            }
+            return delegate.charAt(index);
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            return new BoundedCharSequence(delegate.substring(start, end), remaining);
+        }
     }
 
     /** Table model for Blazor Pack messages. */
@@ -912,11 +1144,13 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
 
             switch (columnIndex) {
                 case 0: // Time
-                    return new SimpleDateFormat(DATE_FORMAT_PATTERN).format(new Date(message.getTimestamp()));
+                    return DATE_FORMAT.format(Instant.ofEpochMilli(message.getTimestamp()));
                 case 1: // Type
                     return message.getMessageType().toString();
                 case 2: // Direction
-                    return message.isOutgoing() ? "Client -> Server" : "Server -> Client";
+                    return message.isOutgoing()
+                            ? Constant.messages.getString("crimsonblazordecoder.table.direction.c2s")
+                            : Constant.messages.getString("crimsonblazordecoder.table.direction.s2c");
                 case 3: // Summary
                     return getSummary(message);
                 default:
@@ -963,6 +1197,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
             if (!messages.isEmpty()) {
                 messages.remove(0);
                 markedRows.remove(0);
+                regexMatchedRows.remove(0);
                 // Shift all marked indices down by 1
                 Set<Integer> shifted = new HashSet<>();
                 for (Integer idx : markedRows) {
@@ -970,6 +1205,20 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                 }
                 markedRows.clear();
                 markedRows.addAll(shifted);
+                Set<Integer> shiftedRegex = new HashSet<>();
+                for (Integer idx : regexMatchedRows) {
+                    shiftedRegex.add(idx - 1);
+                }
+                regexMatchedRows.clear();
+                regexMatchedRows.addAll(shiftedRegex);
+                java.util.Map<Integer, java.util.Set<String>> shiftedDetails = new java.util.HashMap<>();
+                for (java.util.Map.Entry<Integer, java.util.Set<String>> e : regexMatchDetails.entrySet()) {
+                    int key = e.getKey();
+                    if (key == 0) continue; // removed row
+                    shiftedDetails.put(key - 1, e.getValue());
+                }
+                regexMatchDetails.clear();
+                regexMatchDetails.putAll(shiftedDetails);
                 fireTableRowsDeleted(0, 0);
             }
         }
@@ -1008,6 +1257,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
             if (!isSelected) {
                 int modelRow = table.convertRowIndexToModel(row);
 
+                // Apply base colors first: marked > type-based > default
                 if (markedRows.contains(modelRow)) {
                     c.setBackground(COLOR_MARKED);
                 } else {
@@ -1026,6 +1276,11 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                         default:
                             c.setBackground(Color.WHITE);
                     }
+                }
+
+                // Yellow regex highlight applied last — overrides all other colors
+                if (regexMatchedRows.contains(modelRow)) {
+                    c.setBackground(COLOR_REGEX_MATCH);
                 }
             }
 
@@ -1049,9 +1304,10 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
 
             if (confirm == JOptionPane.YES_OPTION) {
                 tableModel.clear();
-                messageCount = 0;
                 autoSelect = true;
                 markedRows.clear();
+                regexMatchedRows.clear();
+                regexMatchDetails.clear();
                 currentMessage = null;
                 updateStatus();
                 jsonView.setText("");
@@ -1081,7 +1337,8 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
             sendPacketButton.setEnabled(false);
             sendInProgress = true;
             modifyStatusLabel.setForeground(new Color(171, 178, 191));
-            modifyStatusLabel.setText("Sending...");
+            modifyStatusLabel.setText(
+                    Constant.messages.getString("crimsonblazordecoder.modify.send.sending"));
 
             int channelId = currentMessage.getMessageId();
             boolean isBinary = currentMessage.isBinary();
@@ -1185,11 +1442,24 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
             if (userSelection == javax.swing.JFileChooser.APPROVE_OPTION) {
                 java.io.File file = fileChooser.getSelectedFile();
 
+                // Confirm overwrite if file exists
+                if (file.exists()) {
+                    int overwrite = JOptionPane.showConfirmDialog(
+                            CrimsonBlazorDecoderPanel.this,
+                            Constant.messages.getString("crimsonblazordecoder.export.confirm.overwrite"),
+                            Constant.messages.getString("crimsonblazordecoder.export.confirm.overwrite.title"),
+                            JOptionPane.YES_NO_OPTION);
+                    if (overwrite != JOptionPane.YES_OPTION) return;
+                }
+
                 if (isJsonTab) {
                     if (!file.getName().endsWith(".json")) {
                         file = new java.io.File(file.getAbsolutePath() + ".json");
                     }
-                    try (java.io.FileWriter writer = new java.io.FileWriter(file)) {
+                    try (java.io.OutputStreamWriter writer =
+                            new java.io.OutputStreamWriter(
+                                    new java.io.FileOutputStream(file),
+                                    java.nio.charset.StandardCharsets.UTF_8)) {
                         writer.write(message.toPrettyJson());
                         JOptionPane.showMessageDialog(
                                 CrimsonBlazorDecoderPanel.this,

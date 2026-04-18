@@ -18,7 +18,7 @@
 package com.crimsonwall.crimsonblazordecoder.decoder;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -42,9 +42,21 @@ public class BlazorPackMessage {
     private long timestamp;
     private boolean outgoing;
 
+    /**
+     * Keys in {@link #decodedData} that contain raw hex/binary payloads and should be excluded from
+     * regex matching to avoid false positives (e.g., SA ID numbers matching long hex digit runs).
+     */
+    private static final java.util.Set<String> RAW_DATA_KEYS =
+            java.util.Set.of(
+                    "arg_4_1",
+                    "arg_4_0",
+                    "messagePackData",
+                    "rawPayload",
+                    "arguments");
+
     /** Constructs an empty message with the current timestamp. */
     public BlazorPackMessage() {
-        this.decodedData = new HashMap<>();
+        this.decodedData = new LinkedHashMap<>();
         this.references = new ArrayList<>();
         this.timestamp = System.currentTimeMillis();
     }
@@ -153,6 +165,8 @@ public class BlazorPackMessage {
         json.append("  \"timestamp\": ").append(timestamp).append(",\n");
         json.append("  \"isBinary\": ").append(isBinary).append(",\n");
 
+        boolean needComma = false;
+
         if (!decodedData.isEmpty()) {
             json.append("  \"data\": {\n");
             List<String> keys = new ArrayList<>(decodedData.keySet());
@@ -188,11 +202,13 @@ public class BlazorPackMessage {
                 }
                 json.append("\n");
             }
-            json.append("  },\n");
+            json.append("  }");
+            needComma = true;
         }
 
         if (!references.isEmpty()) {
-            json.append("  \"references\": [\n");
+            if (needComma) json.append(",");
+            json.append("\n  \"references\": [\n");
             for (int i = 0; i < references.size(); i++) {
                 json.append("    \"")
                         .append(DecoderUtils.escapeJson(references.get(i)))
@@ -202,10 +218,13 @@ public class BlazorPackMessage {
                 }
                 json.append("\n");
             }
-            json.append("  ],\n");
+            json.append("  ]");
+            needComma = true;
         }
 
         if (rawPayload != null && !rawPayload.isEmpty()) {
+            if (needComma) json.append(",");
+            json.append("\n");
             String truncated =
                     rawPayload.length() > 2048
                             ? rawPayload.substring(0, 2048)
@@ -216,13 +235,131 @@ public class BlazorPackMessage {
             json.append("  \"rawPayload\": \"")
                     .append(DecoderUtils.escapeJson(truncated))
                     .append("\"");
-        } else {
-            // Remove trailing comma
-            json.setLength(json.length() - 2);
+        } else if (needComma) {
+            json.append("\n");
         }
 
         json.append("\n}");
         return json.toString();
+    }
+
+    /**
+     * Convert the decoded message to a JSON string suitable for regex matching.
+     *
+     * <p>Only the structured {@code data} field is included — metadata like {@code timestamp},
+     * {@code messageId}, and {@code rawPayload} are excluded to avoid false positives (e.g., credit
+     * card regex matching epoch timestamps, SA ID regex matching hex byte sequences).
+     *
+     * @return a JSON string containing only decoded, human-readable data fields
+     */
+    public String toDecodedJson() {
+        StringBuilder json = new StringBuilder();
+        json.append("{\n");
+
+        if (!decodedData.isEmpty()) {
+            List<String> keys = new ArrayList<>(decodedData.keySet());
+            boolean first = true;
+            for (String key : keys) {
+                if (RAW_DATA_KEYS.contains(key)) continue;
+                Object value = decodedData.get(key);
+                if (!first) {
+                    json.append(",\n");
+                }
+                first = false;
+                json.append("  \"").append(DecoderUtils.escapeJson(key)).append("\": ");
+                appendDecodedJsonValue(json, value, 4);
+            }
+            if (!first) {
+                json.append("\n");
+            }
+        }
+
+        if (!references.isEmpty()) {
+            if (!decodedData.isEmpty()) {
+                json.append(",\n");
+            }
+            json.append("  \"references\": [\n");
+            for (int i = 0; i < references.size(); i++) {
+                json.append("    \"")
+                        .append(DecoderUtils.escapeJson(references.get(i)))
+                        .append("\"");
+                if (i < references.size() - 1) {
+                    json.append(",");
+                }
+                json.append("\n");
+            }
+            json.append("  ]\n");
+        }
+
+        json.append("}");
+        return json.toString();
+    }
+
+    /**
+     * Append a JSON value for regex matching, recursing into maps and lists but skipping raw binary
+     * data and replacing byte arrays with a placeholder.
+     */
+    private void appendDecodedJsonValue(StringBuilder sb, Object value, int indent) {
+        if (value instanceof String) {
+            sb.append("\"").append(DecoderUtils.escapeJson((String) value)).append("\"");
+        } else if (value instanceof Number) {
+            sb.append(value);
+        } else if (value instanceof Boolean) {
+            sb.append(value);
+        } else if (value instanceof Map) {
+            sb.append(mapToDecodedJson((Map<?, ?>) value, indent));
+        } else if (value instanceof List) {
+            sb.append(listToDecodedJson((List<?>) value, indent));
+        } else if (value instanceof byte[]) {
+            sb.append("\"[binary data]\"");
+        } else if (value == null) {
+            sb.append("null");
+        } else {
+            sb.append("\"").append(DecoderUtils.escapeJson(value.toString())).append("\"");
+        }
+    }
+
+    private String mapToDecodedJson(Map<?, ?> map, int indent) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+        List<?> keys = new ArrayList<>(map.keySet());
+        boolean first = true;
+        for (Object key : keys) {
+            Object value = map.get(key);
+            if (!first) {
+                sb.append(",");
+            }
+            first = false;
+            sb.append("\n")
+                    .append(" ".repeat(indent))
+                    .append("\"")
+                    .append(DecoderUtils.escapeJson(String.valueOf(key)))
+                    .append("\": ");
+            appendDecodedJsonValue(sb, value, indent + 2);
+        }
+        if (!keys.isEmpty()) {
+            sb.append("\n").append(" ".repeat(indent - 2));
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private String listToDecodedJson(List<?> list, int indent) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[");
+        for (int i = 0; i < list.size(); i++) {
+            Object value = list.get(i);
+            if (i > 0) {
+                sb.append(",");
+            }
+            sb.append("\n").append(" ".repeat(indent));
+            appendDecodedJsonValue(sb, value, indent + 2);
+        }
+        if (!list.isEmpty()) {
+            sb.append("\n").append(" ".repeat(indent - 2));
+        }
+        sb.append("]");
+        return sb.toString();
     }
 
     private String mapToJson(Map<?, ?> map, int indent) {
@@ -279,7 +416,7 @@ public class BlazorPackMessage {
         } else if (value == null) {
             sb.append("null");
         } else {
-            sb.append(value);
+            sb.append("\"").append(DecoderUtils.escapeJson(value.toString())).append("\"");
         }
     }
 }

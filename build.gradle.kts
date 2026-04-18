@@ -12,7 +12,7 @@ description = "Decodes and displays Blazor Pack messages sent over WebSockets in
 
 zapAddOn {
     addOnName.set("Crimson Blazor Decoder")
-    addOnStatus.set(AddOnStatus.BETA)
+    addOnStatus.set(AddOnStatus.RELEASE)
 
     manifest {
         zapVersion.set("2.17.0")
@@ -30,10 +30,6 @@ zapAddOn {
         }
     }
 
-    apiClientGen {
-        api.set("com.crimsonwall.crimsonblazordecoder.CrimsonBlazorDecoderAPI")
-        messages.set(file("src/main/resources/com/crimsonwall/crimsonblazordecoder/resources/Messages.properties"))
-    }
 }
 
 repositories {

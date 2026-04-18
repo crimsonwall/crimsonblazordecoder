@@ -18,9 +18,12 @@
 package com.crimsonwall.crimsonblazordecoder.decoder;
 
 /** Shared utility methods for decoder classes. */
-final class DecoderUtils {
+public final class DecoderUtils {
 
     private DecoderUtils() {}
+
+    /** Maximum payload size to process (10 MB). Shared by the extension observer and decoder. */
+    public static final int MAX_PAYLOAD_SIZE = 10_485_760;
 
     private static final char[] HEX_CHARS = "0123456789abcdef".toCharArray();
 

@@ -34,7 +34,12 @@ import org.parosproxy.paros.view.View;
 import com.crimsonwall.crimsonblazordecoder.decoder.BlazorPackDecoder;
 import com.crimsonwall.crimsonblazordecoder.decoder.BlazorPackEncoder;
 import com.crimsonwall.crimsonblazordecoder.decoder.BlazorPackMessage;
+import com.crimsonwall.crimsonblazordecoder.decoder.DecoderUtils;
+import com.crimsonwall.crimsonblazordecoder.regex.RegexConfig;
+import com.crimsonwall.crimsonblazordecoder.regex.RegexEntry;
+import com.crimsonwall.crimsonblazordecoder.regex.RegexStorage;
 import com.crimsonwall.crimsonblazordecoder.ui.CrimsonBlazorDecoderPanel;
+import com.crimsonwall.crimsonblazordecoder.ui.OptionsRegexPanel;
 import org.zaproxy.zap.extension.websocket.ExtensionWebSocket;
 import org.zaproxy.zap.extension.websocket.WebSocketChannelDTO;
 import org.zaproxy.zap.extension.websocket.WebSocketMessage;
@@ -63,13 +68,15 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
     private static final int OBSERVER_ORDER = 10000;
 
     /** Maximum payload size to process (10 MB). */
-    private static final int MAX_PAYLOAD_SIZE = 10_485_760;
+    private static final int MAX_PAYLOAD_SIZE = DecoderUtils.MAX_PAYLOAD_SIZE;
 
     private volatile ExtensionWebSocket extensionWebSocket;
     private volatile BlazorPackDecoder decoder;
     private volatile CrimsonBlazorDecoderPanel blazerPanel;
     private volatile CrimsonBlazorDecoderObserver webSocketObserver;
-    private volatile CrimsonBlazorDecoderAPI api;
+    private volatile RegexStorage regexStorage;
+    private volatile RegexConfig regexConfig;
+    private volatile OptionsRegexPanel optionsPanel;
 
     /**
      * Active WebSocket proxies keyed by channel ID. Used to send modified packets back to the
@@ -89,15 +96,18 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
 
         this.decoder = new BlazorPackDecoder();
         this.webSocketObserver = new CrimsonBlazorDecoderObserver();
-        this.api = new CrimsonBlazorDecoderAPI(this);
+        this.regexStorage = new RegexStorage();
 
-        extensionHook.addApiImplementor(api);
+        // Load regex config on startup
+        getRegexConfig().load();
 
         // Register observer with WebSocket extension early
         registerWebSocketObserver();
 
         if (hasView()) {
             extensionHook.getHookView().addStatusPanel(getBlazerPanel());
+            // Register options panel in ZAP's Tools → Options dialog
+            extensionHook.getHookView().addOptionPanel(getOptionsPanel());
         }
 
         LOGGER.info("Crimson Blazor Decoder extension hooked successfully");
@@ -111,6 +121,9 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
     @Override
     public void unload() {
         super.unload();
+        if (blazerPanel != null) {
+            blazerPanel.cleanup();
+        }
         if (extensionWebSocket != null && webSocketObserver != null) {
             extensionWebSocket.removeAllChannelObserver(webSocketObserver);
             LOGGER.info("Crimson Blazor Decoder WebSocket observer removed");
@@ -119,6 +132,10 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
         decoder = null;
         blazerPanel = null;
         webSocketObserver = null;
+        extensionWebSocket = null;
+        regexStorage = null;
+        regexConfig = null;
+        optionsPanel = null;
     }
 
     @Override
@@ -169,6 +186,22 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
     /** Get the decoder instance. */
     public BlazorPackDecoder getDecoder() {
         return decoder;
+    }
+
+    /** Get the regex configuration, lazy-initialised with synchronized access. */
+    public synchronized RegexConfig getRegexConfig() {
+        if (regexConfig == null) {
+            regexConfig = new RegexConfig();
+        }
+        return regexConfig;
+    }
+
+    /** Get the options panel for regex settings, lazy-initialised with synchronized access. */
+    public synchronized OptionsRegexPanel getOptionsPanel() {
+        if (optionsPanel == null) {
+            optionsPanel = new OptionsRegexPanel(this);
+        }
+        return optionsPanel;
     }
 
     /** Add a decoded Blazor Pack message to the UI panel. */
@@ -243,7 +276,7 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
                     new ImageIcon(
                             DisplayUtils.getScaledIcon(
                                             ExtensionCrimsonBlazorDecoder.class.getResource(
-                                                    "/resources/crimsonblazordecoder-icon.png"))
+                                                    "crimsonblazordecoder-icon.png"))
                                     .getImage());
         }
         return cachedIcon;

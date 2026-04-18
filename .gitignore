@@ -3,3 +3,6 @@ build/
 *.class
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
+backup.tgz
+example*.txt
+ZapAddOn.xml

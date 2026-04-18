@@ -56,8 +56,8 @@ public class BlazorPackDecoder {
     private static final int PROTOCOL_VERSION = 1;
 
     // Safety limits
-    private static final int MAX_PAYLOAD_SIZE = 10_485_760; // 10 MB
-    private static final int MAX_VARINT_VALUE = 10_485_760; // 10 MB
+    private static final int MAX_PAYLOAD_SIZE = DecoderUtils.MAX_PAYLOAD_SIZE;
+    private static final int MAX_VARINT_VALUE = DecoderUtils.MAX_PAYLOAD_SIZE;
     private static final int MAX_VARINT_BYTES = 5; // 5 bytes max for a valid VarInt
     private static final int MAX_TRY_DECODE_SIZE = 4096; // Max bytes for tryDecodeAsString
     private static final int MAX_LIST_ELEMENTS = 500; // Max elements to process in addListElements

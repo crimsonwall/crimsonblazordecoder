@@ -128,7 +128,13 @@ public class RenderBatchDecoder {
         return strings;
     }
 
-    /** Extract component IDs as small positive 4-byte LE integers from the header region. */
+    /**
+     * Extract component IDs as small positive 4-byte LE integers from the header region.
+     *
+     * <p><b>Heuristic:</b> This method scans every 4-byte aligned position in the first 512 bytes
+     * and treats any value in the range 1-9999 as a component ID. This is a best-effort heuristic
+     * that may produce false positives in arbitrary binary data.
+     */
     private List<Integer> extractComponentIds(byte[] data) {
         List<Integer> ids = new ArrayList<>();
         // Component IDs are typically in the first 512 bytes as small positive values

@@ -20,7 +20,7 @@ package com.crimsonwall.crimsonblazordecoder.decoder;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.logging.log4j.LogManager;
@@ -420,7 +420,7 @@ public class MessagePackDecoder {
             LOGGER.warn("Map size {} exceeds max {}, truncating", size, MAX_COLLECTION_SIZE);
             size = MAX_COLLECTION_SIZE;
         }
-        Map<String, Object> map = new HashMap<>(Math.min(size * 2, 128));
+        Map<String, Object> map = new LinkedHashMap<>(Math.min(size * 2, 128));
         for (int i = 0; i < size; i++) {
             if (!buffer.hasRemaining()) {
                 break;
@@ -469,7 +469,7 @@ public class MessagePackDecoder {
 
         // Read the extension type
         if (!buffer.hasRemaining()) {
-            Map<String, Object> result = new HashMap<>();
+            Map<String, Object> result = new LinkedHashMap<>();
             result.put("extensionType", -1);
             return result;
         }
@@ -487,7 +487,7 @@ public class MessagePackDecoder {
                         dataBytes,
                         buffer.remaining());
                 buffer.position(buffer.limit()); // Consume rest of buffer
-                Map<String, Object> result = new HashMap<>();
+                Map<String, Object> result = new LinkedHashMap<>();
                 result.put("extensionType", type);
                 result.put("error", "Insufficient data");
                 return result;
@@ -509,14 +509,14 @@ public class MessagePackDecoder {
             } else if (nextValue instanceof List) {
                 @SuppressWarnings("unchecked")
                 List<Object> list = (List<Object>) nextValue;
-                Map<String, Object> result = new HashMap<>();
+                Map<String, Object> result = new LinkedHashMap<>();
                 result.put("extensionType", type);
                 result.put("array", list);
                 return result;
             }
         }
 
-        Map<String, Object> result = new HashMap<>();
+        Map<String, Object> result = new LinkedHashMap<>();
         result.put("extensionType", type);
         result.put("extensionLength", length);
         return result;
@@ -563,7 +563,7 @@ public class MessagePackDecoder {
             } else if (nextValue instanceof List) {
                 @SuppressWarnings("unchecked")
                 List<Object> list = (List<Object>) nextValue;
-                Map<String, Object> result = new HashMap<>();
+                Map<String, Object> result = new LinkedHashMap<>();
                 result.put("extensionType", type);
                 result.put("array", list);
                 return result;
@@ -581,7 +581,7 @@ public class MessagePackDecoder {
             try {
                 Object decoded = decode(extData);
                 if (decoded != null) {
-                    Map<String, Object> result = new HashMap<>();
+                    Map<String, Object> result = new LinkedHashMap<>();
                     result.put("extensionType", type);
                     if (decoded instanceof Map) {
                         @SuppressWarnings("unchecked")
@@ -599,20 +599,20 @@ public class MessagePackDecoder {
             }
 
             // Return raw hex of extension data
-            Map<String, Object> result = new HashMap<>();
+            Map<String, Object> result = new LinkedHashMap<>();
             result.put("extensionType", type);
             result.put("extensionHex", DecoderUtils.bytesToHex(extData));
             return result;
         }
 
-        Map<String, Object> result = new HashMap<>();
+        Map<String, Object> result = new LinkedHashMap<>();
         result.put("extensionType", type);
         result.put("dataSize", dataSize);
         return result;
     }
 
     private Map<String, Object> createErrorMap(String error) {
-        Map<String, Object> result = new HashMap<>();
+        Map<String, Object> result = new LinkedHashMap<>();
         result.put("error", error);
         return result;
     }

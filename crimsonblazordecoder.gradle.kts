@@ -8,7 +8,7 @@ zapAddOn {
 
     manifest {
         zapVersion.set("2.17.0")
-        author.set("CrimsonWall")
+        author.set("Renico Koen / crimsonWall.com")
         url.set("https://github.com/crimsonwall/crimsonblazordecoder")
         extensions {
             register("com.crimsonwall.crimsonblazordecoder.ExtensionCrimsonBlazorDecoder")

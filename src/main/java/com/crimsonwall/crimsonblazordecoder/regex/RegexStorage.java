@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
+ * Renico Koen / Crimson Wall / 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,6 +39,10 @@ public class RegexStorage {
 
     private final File configFile;
 
+    /**
+     * Constructs a new {@code RegexStorage} whose configuration file resides in the
+     * ZAP home directory under {@code crimsonblazordecoder/regex-rules.xml}.
+     */
     public RegexStorage() {
         File dir = new File(Constant.getZapHome(), CONFIG_DIR);
         this.configFile = new File(dir, CONFIG_FILE);
@@ -85,7 +89,7 @@ public class RegexStorage {
         defaults.add(new RegexEntry("AWS Access Key",
                 "(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}", true, true));
         defaults.add(new RegexEntry("AWS Secret Key",
-                "(?i)aws_secret_access_key\\s*[=:]\s*[A-Za-z0-9/+=]{40}", true, true));
+                "(?i)aws_secret_access_key\\s*[=:]\\s*[A-Za-z0-9/+=]{40}", true, true));
         defaults.add(new RegexEntry("GCP API Key",
                 "AIza[\\w-]{35}", true, true));
         defaults.add(new RegexEntry("Azure Client Secret",
@@ -129,7 +133,7 @@ public class RegexStorage {
 
         // --- PaaS ---
         defaults.add(new RegexEntry("Heroku API Key",
-                "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", false, false));
+                "heroku\\s*[=:]\\s*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", false, false));
 
         return defaults;
     }

@@ -1,0 +1,204 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Crimson Blazor Decoder Help</title>
+</head>
+<body>
+<h1>Crimson Blazor Decoder</h1>
+<h2>Overview</h2>
+<p>Crimson Blazor Decoder is an OWASP ZAP add-on that decodes and displays Blazor Pack messages sent over WebSocket connections in real time.</p>
+<p>Blazor Server applications communicate between the browser and server using the Blazor Pack protocol over SignalR WebSockets. The messages are encoded in a binary MessagePack format that is not human-readable. This makes security testing of Blazor Server applications difficult, as the WebSocket traffic in ZAP appears as opaque binary data.</p>
+<p>Crimson Blazor Decoder intercepts these WebSocket messages, decodes the MessagePack payload, and presents the data as pretty-printed JSON in a dedicated ZAP panel, enabling security testers to inspect and analyse Blazor Pack traffic.</p>
+<h2>Why Use This Add-on?</h2>
+<p>Blazor Server is increasingly used in enterprise web applications. During a penetration test, being able to read Blazor Pack traffic is essential for:</p>
+<ul>
+<li><strong>Understanding application logic</strong> — Blazor Server renders UI server-side and pushes diffs to the client as RENDER_BATCH messages. Decoding these reveals which components are rendering, what data they contain, and how the UI state changes in response to user actions.</li>
+<li><strong>Identifying sensitive data exposure</strong> — Component state, form values, and server responses all travel over the WebSocket. Decoded messages make it straightforward to spot PII, tokens, or business logic that should not be visible to the client.</li>
+<li><strong>Mapping JS interop calls</strong> — JS_INTEROP messages show every JavaScript function invoked by the server, including method names and arguments. This is useful for finding dangerous sinks or undocumented client-side behaviour.</li>
+<li><strong>Identifying SignalR circuit endpoints</strong> — Circuit Start and Close messages reveal connection identifiers and negotiation details that can be used to test session handling and connection hijacking scenarios.</li>
+</ul>
+<h2>How It Works</h2>
+<ol>
+<li><strong>Intercepts</strong> WebSocket message frames (both text and binary) through a ZAP WebSocket observer.</li>
+<li><strong>Detects</strong> Blazor/SignalR messages using protocol-specific heuristics (binary markers, JSON markers).</li>
+<li><strong>Decodes</strong> the MessagePack payload, handling the Blazor Pack multi-value encoding, prefix bytes, and SignalR hub message format.</li>
+<li><strong>Displays</strong> the decoded data in a syntax-highlighted JSON view with a hex dump of the raw bytes.</li>
+<li><strong>Categorises</strong> messages by type: Render Batch, JS Interop, Circuit Start/Close, Completion, and more.</li>
+</ol>
+<h2>UI Panel</h2>
+<p>The main UI panel displays decoded Blazor Pack messages in a table with the following columns:</p>
+<ul>
+<li><strong>Time</strong> — Timestamp of when the message was captured</li>
+<li><strong>Type</strong> — Message type (Render Batch, JS Interop, Circuit Start, Circuit Close, Error, Unknown)</li>
+<li><strong>Direction</strong> — Client → Server (C→S) or Server → Client (S→C)</li>
+<li><strong>Summary</strong> — Brief description of the message content</li>
+</ul>
+<h3>Table Features</h3>
+<ul>
+<li><strong>Auto-scroll</strong> — Automatically scrolls to show new messages. Click any row other than the last one to disable auto-scroll and manually inspect messages.</li>
+<li><strong>Color coding</strong> — Rows are color-coded by message type:
+<ul>
+<li><em>Light blue</em> — Render Batch messages</li>
+<li><em>Light green</em> — JS Interop messages</li>
+<li><em>Light red</em> — Error messages</li>
+<li><em>White</em> — All other message types</li>
+</ul>
+</li>
+<li><strong>Marking</strong> — Right-click any row to mark/unmark it for later reference. Marked rows are highlighted in lime green.</li>
+<li><strong>Regex highlighting</strong> — Rows containing regex matches are highlighted in yellow (highest priority color). Hover over highlighted rows to see which regex rules matched.</li>
+<li><strong>Message limit</strong> — Maximum of 10,000 messages kept in memory. Oldest messages are automatically removed when the limit is reached.</li>
+</ul>
+<h2>Detail View Tabs</h2>
+<p>When you select a message in the table, detailed information is shown in the tabbed view on the right:</p>
+<h3>JSON Tab</h3>
+<p>Displays the pretty-printed JSON representation of the decoded message with syntax highlighting:</p>
+<ul>
+<li><strong>Keys</strong> — Red</li>
+<li><strong>Strings</strong> — Green</li>
+<li><strong>Numbers</strong> — Orange</li>
+<li><strong>Booleans/null</strong> — Purple</li>
+<li><strong>Punctuation</strong> — Gray</li>
+</ul>
+<p><strong>Regex highlighting</strong> — If the message contains regex matches, matching text in the data section is highlighted with a yellow background. Only matches within the decoded data fields are highlighted — metadata fields (timestamp, messageId, rawPayload) are excluded to prevent false positives.</p>
+<p><strong>Copy</strong> — Right-click to copy selected text to the clipboard.</p>
+<h3>Raw Tab</h3>
+<p>Displays a hex dump of the original binary message payload with:</p>
+<ul>
+<li><strong>Offset column</strong> — Byte offset in hexadecimal (gray)</li>
+<li><strong>Hex column</strong> — Bytes in hexadecimal (green)</li>
+<li><strong>ASCII column</strong> — ASCII representation (blue)</li>
+</ul>
+<p>Large payloads are truncated to 4096 bytes for display. The actual byte count is shown at the bottom.</p>
+<p><strong>Copy</strong> — Right-click to copy selected text to the clipboard.</p>
+<h3>Modify Tab (Outgoing Messages Only)</h3>
+<p>This tab appears only for outgoing (Client → Server) messages when the WebSocket connection is active. It allows you to:</p>
+<ol>
+<li>Edit the JSON payload in the text area</li>
+<li>Click <strong>Send to Server</strong> to resend the modified message</li>
+</ol>
+<p>The send button is only enabled when the WebSocket connection is active. A status message below the button shows the result of the send operation (success, error, connection not available).</p>
+<p><em>Use this feature to test server-side validation, input sanitisation, and business logic bypasses.</em></p>
+<h3>RegEx Tab</h3>
+<p>Shows which regex rules matched in the selected message. This tab displays the list of matching rule names. The matching text is also highlighted in yellow in the JSON view.</p>
+<h2>Regex Security Scanning</h2>
+<p>The Crimson Blazor Decoder includes a powerful regex-based security scanner that automatically highlights sensitive data patterns in decoded Blazor Pack messages.</p>
+<h3>Default Regex Rules</h3>
+<p>The add-on includes 25 pre-configured regex rules for detecting common sensitive data patterns:</p>
+<ul>
+<li>Email addresses</li>
+<li>IPv4 addresses</li>
+<li>South African ID numbers</li>
+<li>Credit card numbers (multiple formats)</li>
+<li>AWS Access Keys</li>
+<li>AWS Secret Keys</li>
+<li>GCP Service Account credentials</li>
+<li>GitHub personal access tokens</li>
+<li>GitLab personal access tokens</li>
+<li>JWT tokens</li>
+<li>Private keys (RSA, DSA, EC, ECDSA, OPENSSH)</li>
+<li>Stripe API keys</li>
+<li>Slack tokens</li>
+<li>Discord tokens</li>
+<li>SendGrid API keys</li>
+<li>Twilio API keys</li>
+<li>Azure Storage account keys</li>
+<li>Generic secret keys (key, token, secret, password, api_key)</li>
+</ul>
+<h3>How Regex Matching Works</h3>
+<ul>
+<li><strong>Scope</strong> — Regex matching is scoped to the decoded data fields only. Metadata fields (timestamp, messageId, rawPayload) are excluded to prevent false positives.</li>
+<li><strong>Truncation</strong> — Payloads are truncated to 5000 characters for regex matching to maintain performance.</li>
+<li><strong>Safeguards</strong> — Protection against catastrophic backtracking: character access is limited to 100,000 per pattern match.</li>
+<li><strong>Direction filtering</strong> — Rules can be enabled separately for Client→Server and Server→Client messages.</li>
+</ul>
+<h3>Visual Indicators</h3>
+<ul>
+<li><strong>Table rows</strong> — Yellow background highlight (overrides all other row colors)</li>
+<li><strong>JSON view</strong> — Yellow background on matching text within the data section</li>
+<li><strong>Tooltips</strong> — Hover over highlighted table rows to see which regex rules matched</li>
+</ul>
+<h2>Configuration</h2>
+<p>Access the add-on configuration via <strong>Tools → Options → Crimson Blazor Decoder</strong>.</p>
+<h3>Regex Rules Table</h3>
+<p>The options panel displays a table of all regex rules with the following columns:</p>
+<ul>
+<li><strong>Name</strong> — Descriptive name for the rule (editable)</li>
+<li><strong>Regex</strong> — Regular expression pattern (editable)</li>
+<li><strong>C→S</strong> — Enable for Client → Server messages</li>
+<li><strong>S→C</strong> — Enable for Server → Client messages</li>
+</ul>
+<h3>Managing Rules</h3>
+<ul>
+<li><strong>Add</strong> — Click the <strong>Add</strong> button to create a new regex rule. Enter a name, pattern, and check the desired direction checkboxes.</li>
+<li><strong>Remove</strong> — Select a rule and click <strong>Remove</strong> to delete it.</li>
+<li><strong>Edit</strong> — Click directly on any cell to edit it. Pattern changes are validated for syntax errors.</li>
+<li><strong>Toggle all</strong> — Click the C→S or S→C column header to toggle all checkboxes in that column.</li>
+</ul>
+<h3>Rule Limits</h3>
+<ul>
+<li>Maximum of 200 regex rules allowed</li>
+<li>Patterns are validated for syntax errors when added or edited</li>
+<li>Invalid patterns are rejected with an error message</li>
+</ul>
+<h3>Configuration Persistence</h3>
+<p>Regex rules are automatically saved to ZAP's configuration file when you click OK in the Options dialog. Changes take effect immediately for new messages.</p>
+<h2>Toolbar Actions</h2>
+<h3>Clear Messages</h3>
+<p>Click the <strong>Clear Messages</strong> button to remove all decoded messages from the table. A confirmation dialog is shown before clearing.</p>
+<h3>Export</h3>
+<p>Click the <strong>Export</strong> button to export the currently selected message:</p>
+<ul>
+<li><strong>If JSON tab is active</strong> — Exports as a .json file with the pretty-printed JSON representation</li>
+<li><strong>If Raw tab is active</strong> — Exports as a .raw file with the original binary payload</li>
+</ul>
+<p>A file save dialog is shown with a default filename based on the message ID and timestamp. You will be prompted to confirm if the file already exists.</p>
+<h2>Requirements</h2>
+<ul>
+<li>OWASP ZAP 2.17.0 or later</li>
+<li>The WebSocket add-on (installed by default in ZAP)</li>
+</ul>
+<h2>Accessing the Panel</h2>
+<p>After installation, open the panel via <strong>View → Show Tab → Crimson Blazor Decoder Tab</strong>.</p>
+<h2>Tips and Tricks</h2>
+<ul>
+<li><strong>Disable auto-scroll</strong> — Click any row other than the last one to stop auto-scroll and manually inspect previous messages.</li>
+<li><strong>Mark important messages</strong> — Right-click and select <strong>Mark</strong> to highlight important messages in lime green.</li>
+<li><strong>Quick regex toggle</strong> — Click the C→S or S→C column header in the options table to quickly enable/disable all rules for that direction.</li>
+<li><strong>Timestamp tooltips</strong> — Hover over timestamp fields in the JSON view to see human-readable dates.</li>
+<li><strong>Modify and resend</strong> — Use the Modify tab on outgoing messages to test how the server handles modified payloads.</li>
+<li><strong>Hex dump analysis</strong> — Use the Raw tab to inspect the original binary format and understand the Blazor Pack encoding.</li>
+</ul>
+<h2>Performance Considerations</h2>
+<ul>
+<li>Maximum 10,000 messages stored in memory (oldest removed when limit reached)</li>
+<li>JSON display truncated to 50,000 characters</li>
+<li>Hex dump display truncated to 4,096 bytes</li>
+<li>Regex matching limited to 5,000 characters per payload</li>
+<li>Character access limited to 100,000 per regex pattern (prevents catastrophic backtracking)</li>
+</ul>
+<h2>Troubleshooting</h2>
+<p><strong>No messages appearing?</strong></p>
+<ul>
+<li>Verify that the target application is using Blazor Server</li>
+<li>Check that WebSocket connections are being proxied through ZAP</li>
+<li>Ensure the WebSocket add-on is enabled</li>
+</ul>
+<p><strong>Messages not decoding correctly?</strong></p>
+<ul>
+<li>Some messages may not be Blazor Pack messages — only Blazor/SignalR messages are decoded</li>
+<li>Binary frames without the correct Blazer Pack signature will be skipped</li>
+<li>Check the Raw tab to see the original binary payload</li>
+</ul>
+<p><strong>Regex matches not appearing?</strong></p>
+<ul>
+<li>Verify that the regex rules are enabled for the correct direction (C→S or S→C)</li>
+<li>Check that the pattern syntax is valid (invalid patterns are rejected)</li>
+<li>Regex matching is limited to the decoded data fields — metadata fields are excluded</li>
+</ul>
+<h2>Support</h2>
+<p>For issues, questions, or contributions, please visit the <a href="https://github.com/crimsonwall/crimsonblazordecoder">GitHub repository</a>.</p>
+<h2>License</h2>
+<p>Copyright 2026 crimsonwall.com. Licensed under the Apache License, Version 2.0.</p>
+</body>
+</html>

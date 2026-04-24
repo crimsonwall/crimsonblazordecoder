@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
+ * Renico Koen / Crimson Wall / 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -183,23 +183,22 @@ public class MessagePackDecoder {
     /**
      * Try to decode by skipping a 1-5 byte prefix. Looks for the first byte that starts a valid
      * MessagePack array (0x90-0x9f), map (0x80-0x8f), or positive fixint followed by array/map.
+     *
+     * <p>Uses ByteBuffer slicing to avoid copying the remaining data into a new array.
      */
     private List<Object> trySkipPrefix(byte[] data) {
-        // Try skipping 1 to 5 bytes (common prefix sizes)
+        ByteBuffer wrapped = ByteBuffer.wrap(data);
         for (int skip = 1; skip <= Math.min(5, data.length - 1); skip++) {
             int nextByte = data[skip] & 0xFF;
-            // Check if this looks like the start of a SignalR MessagePack hub message
-            // SignalR messages start with a fixarray, or a fixint followed by more data
-            if ((nextByte >= 0x90 && nextByte <= 0x9f) // fixarray
-                    || (nextByte >= 0x80 && nextByte <= 0x8f) // fixmap
-                    || (nextByte >= 0x01 && nextByte <= 0x07) // SignalR message type
-                    || nextByte == 0xdc // array16
-                    || nextByte == 0xdd) { // array32
+            if ((nextByte >= 0x90 && nextByte <= 0x9f)
+                    || (nextByte >= 0x80 && nextByte <= 0x8f)
+                    || (nextByte >= 0x01 && nextByte <= 0x07)
+                    || nextByte == 0xdc
+                    || nextByte == 0xdd) {
 
                 try {
-                    byte[] remaining = new byte[data.length - skip];
-                    System.arraycopy(data, skip, remaining, 0, remaining.length);
-                    ByteBuffer buffer = ByteBuffer.wrap(remaining);
+                    ByteBuffer buffer = wrapped.duplicate();
+                    buffer.position(skip);
                     List<Object> results = new ArrayList<>();
                     while (buffer.hasRemaining() && results.size() < MAX_TOP_LEVEL_VALUES) {
                         int posBefore = buffer.position();
@@ -208,9 +207,8 @@ public class MessagePackDecoder {
                         results.add(value == NULL_SENTINEL ? null : value);
                     }
                     if (!results.isEmpty()) {
-                        // Prepend the skipped prefix byte as a number
                         List<Object> combined = new ArrayList<>();
-                        combined.add(data[0] & 0xFF); // raw prefix byte value
+                        combined.add(data[0] & 0xFF);
                         combined.addAll(results);
                         return combined;
                     }
@@ -695,52 +693,48 @@ public class MessagePackDecoder {
      * list contains only primitive types (numbers, strings, booleans, null) and maps with string
      * keys - essentially anything that could be represented in JSON.
      *
+     * <p>Recursion is bounded by {@code maxDepth} to prevent O(n²) blowup on deeply nested
+     * structures.
+     *
      * @param list the list to check
      * @return true if this looks like a serialized JSON string
      */
     private boolean looksLikeJsonString(List<?> list) {
-        // Must have at least one element
-        if (list.isEmpty()) {
-            return false;
+        return looksLikeJsonString(list, 0);
+    }
+
+    private boolean looksLikeJsonString(List<?> list, int depth) {
+        if (depth > 4 || list.isEmpty()) {
+            return depth <= 4 && !list.isEmpty();
         }
 
-        // Check all elements
         for (Object item : list) {
             if (item == null || item instanceof String || item instanceof Number
                     || item instanceof Boolean) {
-                // Primitive JSON type - OK
                 continue;
             }
             if (item instanceof List) {
-                // Nested list - recursively check
-                if (!looksLikeJsonString((List<?>) item)) {
+                if (!looksLikeJsonString((List<?>) item, depth + 1)) {
                     return false;
                 }
                 continue;
             }
             if (item instanceof Map) {
-                // Map - check if it can be represented in JSON
                 @SuppressWarnings("unchecked")
                 Map<?, ?> map = (Map<?, ?>) item;
                 for (Map.Entry<?, ?> entry : map.entrySet()) {
-                    // Keys must be strings (or convertible to strings)
                     if (!(entry.getKey() instanceof String)) {
                         return false;
                     }
-                    // Values must be JSON-serializable
-                    Object value = entry.getValue();
-                    if (value instanceof byte[]) {
-                        // byte[] would be serialized as hex, not native JSON
+                    if (entry.getValue() instanceof byte[]) {
                         return false;
                     }
                 }
                 continue;
             }
-            // Any other type (e.g., byte[]) means this is NOT a JSON string
             return false;
         }
 
-        // All elements are JSON-serializable primitives
         return true;
     }
 

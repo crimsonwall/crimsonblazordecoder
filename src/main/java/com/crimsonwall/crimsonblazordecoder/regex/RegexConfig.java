@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
+ * Renico Koen / Crimson Wall / 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,16 +25,21 @@ import org.apache.logging.log4j.Logger;
 /**
  * Manages regex configuration for the Crimson Blazor Decoder add-on.
  *
- * <p>This class provides a centralized configuration management for regex rules
+ * <p>This class provides centralized configuration management for regex rules
  * used to match and highlight patterns in decoded Blazor messages. It delegates
  * persistence to {@link RegexStorage}.
+ *
+ * <p>All access to the internal entries list is synchronized to ensure thread safety
+ * between the WebSocket observer thread and the Swing EDT.
  */
 public class RegexConfig {
 
     private static final Logger LOGGER = LogManager.getLogger(RegexConfig.class);
 
     private final RegexStorage storage = new RegexStorage();
-    private volatile List<RegexEntry> entries;
+
+    /** Guarded by {@code this}. */
+    private List<RegexEntry> entries = new ArrayList<>();
 
     /** Cached list of active C2S entries, invalidated on mutation. */
     private volatile List<RegexEntry> cachedActiveC2SEntries;
@@ -42,12 +47,13 @@ public class RegexConfig {
     /** Cached list of active S2C entries, invalidated on mutation. */
     private volatile List<RegexEntry> cachedActiveS2CEntries;
 
-    public RegexConfig() {
-        this.entries = new ArrayList<>();
-    }
+    /** Creates an empty regex configuration. */
+    public RegexConfig() {}
 
-    /** Load config from disk. Falls back to defaults if no file exists. */
-    public void load() {
+    /**
+     * Loads config from disk. Falls back to defaults if no file exists.
+     */
+    public synchronized void load() {
         entries = storage.load();
         if (entries.isEmpty()) {
             entries = RegexStorage.createDefaults();
@@ -57,31 +63,51 @@ public class RegexConfig {
         cachedActiveS2CEntries = null;
     }
 
-    /** Save the current regex entries via RegexStorage. */
-    public void save() {
+    /**
+     * Saves the current regex entries via {@link RegexStorage}.
+     */
+    public synchronized void save() {
         storage.save(entries);
     }
 
-    // --- Getters and setters ---
-
-    public List<RegexEntry> getEntries() {
+    /**
+     * Returns a defensive copy of all regex entries.
+     *
+     * @return a new list containing all current entries
+     */
+    public synchronized List<RegexEntry> getEntries() {
         return new ArrayList<>(entries);
     }
 
-    public void setEntries(List<RegexEntry> entries) {
+    /**
+     * Replaces all entries with a defensive copy of the given list.
+     *
+     * @param entries the new entries to set
+     */
+    public synchronized void setEntries(List<RegexEntry> entries) {
         this.entries = new ArrayList<>(entries);
         cachedActiveC2SEntries = null;
         cachedActiveS2CEntries = null;
     }
 
-    /** Get all enabled C2S entries with valid compiled patterns. Result is cached until entries change. */
+    /**
+     * Returns all enabled client-to-server entries with valid compiled patterns.
+     *
+     * <p>The result is cached until entries change.
+     *
+     * @return cached list of active C2S regex entries
+     */
     public List<RegexEntry> getActiveC2SEntries() {
         List<RegexEntry> cached = cachedActiveC2SEntries;
         if (cached != null) {
             return cached;
         }
+        List<RegexEntry> snapshot;
+        synchronized (this) {
+            snapshot = new ArrayList<>(entries);
+        }
         List<RegexEntry> active = new ArrayList<>();
-        for (RegexEntry entry : entries) {
+        for (RegexEntry entry : snapshot) {
             if (entry.isActiveC2S() && entry.getCompiledPattern() != null) {
                 active.add(entry);
             }
@@ -90,14 +116,24 @@ public class RegexConfig {
         return active;
     }
 
-    /** Get all enabled S2C entries with valid compiled patterns. Result is cached until entries change. */
+    /**
+     * Returns all enabled server-to-client entries with valid compiled patterns.
+     *
+     * <p>The result is cached until entries change.
+     *
+     * @return cached list of active S2C regex entries
+     */
     public List<RegexEntry> getActiveS2CEntries() {
         List<RegexEntry> cached = cachedActiveS2CEntries;
         if (cached != null) {
             return cached;
         }
+        List<RegexEntry> snapshot;
+        synchronized (this) {
+            snapshot = new ArrayList<>(entries);
+        }
         List<RegexEntry> active = new ArrayList<>();
-        for (RegexEntry entry : entries) {
+        for (RegexEntry entry : snapshot) {
             if (entry.isActiveS2C() && entry.getCompiledPattern() != null) {
                 active.add(entry);
             }

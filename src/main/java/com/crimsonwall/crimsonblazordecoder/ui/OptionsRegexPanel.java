@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
+ * Renico Koen / Crimson Wall / 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -66,6 +66,11 @@ public class OptionsRegexPanel extends AbstractParamPanel {
     private RegexTableModel tableModel;
     private JTable regexTable;
 
+    /**
+     * Constructs the regex options panel.
+     *
+     * @param extension the parent extension used to read and persist regex configuration
+     */
     public OptionsRegexPanel(ExtensionCrimsonBlazorDecoder extension) {
         this.extension = extension;
         setName(Constant.messages.getString("crimsonblazordecoder.options.title"));
@@ -273,17 +278,33 @@ public class OptionsRegexPanel extends AbstractParamPanel {
 
     // --- AbstractParamPanel lifecycle ---
 
+    /**
+     * Loads the current regex configuration into the table model.
+     *
+     * @param obj ignored (required by the {@code AbstractParamPanel} contract)
+     */
     @Override
     public void initParam(Object obj) {
         tableModel.setEntries(extension.getRegexConfig().getEntries());
     }
 
+    /**
+     * Persists the current table contents to the regex configuration file.
+     *
+     * @param obj ignored (required by the {@code AbstractParamPanel} contract)
+     * @throws Exception if the configuration file cannot be written
+     */
     @Override
     public void saveParam(Object obj) throws Exception {
         extension.getRegexConfig().setEntries(new ArrayList<>(tableModel.getEntries()));
         extension.getRegexConfig().save();
     }
 
+    /**
+     * Returns the help-page index key for ZAP's built-in help system.
+     *
+     * @return the help index identifier for this options panel
+     */
     @Override
     public String getHelpIndex() {
         return "crimsonblazordecoder.options";

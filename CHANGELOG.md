@@ -2,6 +2,15 @@
 
 All notable changes to this add-on will be documented in this file.
 
+## 1.0.1 - 2026-04-25
+
+### Fixed
+- Thread safety: RegexConfig entries list now uses synchronized access to prevent concurrent modification between WebSocket observer and Swing EDT threads
+- Security: BlazorPackEncoder.parseJson now validates input length to prevent OOM on oversized inputs
+- Performance: DecoderUtils.escapeJson replaces String.format with fast manual hex conversion for control character escaping
+- Performance: MessagePackDecoder.trySkipPrefix uses ByteBuffer slicing instead of array copying to reduce allocations
+- Performance: MessagePackDecoder.looksLikeJsonString adds recursion depth limit to prevent O(n²) blowup on deeply nested structures
+
 ## 1.0.0 - 2026-04-18
 
 ### Added

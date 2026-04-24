@@ -23,30 +23,61 @@ Blazor Server is increasingly used in enterprise web applications. During a pene
 
 Without this add-on, all of the above is hidden inside binary MessagePack blobs that appear as garbage in ZAP's WebSockets tab.
 
-## How It Works
+## Features
 
-1. **Intercepts** WebSocket message frames (both text and binary) through a ZAP WebSocket observer.
-2. **Detects** Blazor/SignalR messages using protocol-specific heuristics (binary markers, JSON markers).
-3. **Decodes** the MessagePack payload, handling the Blazor Pack multi-value encoding, prefix bytes, and SignalR hub message format.
-4. **Displays** the decoded data in a syntax-highlighted JSON view with a hex dump of the raw bytes.
-5. **Categorises** messages by type: Render Batch, JS Interop, Circuit Start/Close, Completion, and more.
+### Message Decoding
+- Real-time decoding of Blazor Pack WebSocket traffic (both text and binary frames)
+- Automatic detection of Blazor/SignalR messages using protocol-specific heuristics
+- Message categorization: Render Batch, JS Interop, Circuit Start/Close, Error, and more
 
-### Features
+### Message Table
+- Color-coded rows by message type (light blue for Render Batch, light green for JS Interop, light red for Errors)
+- Mark/unmark messages for tracking (lime green highlight)
+- Auto-scroll to new messages (click any row to disable)
+- Status bar showing message count
+- Maximum 10,000 messages stored (oldest auto-removed)
 
-- Real-time decoding of Blazor Pack WebSocket traffic
-- Syntax-highlighted JSON view with a dark theme
-- Raw hex dump view with offset, hex, and ASCII columns
-- Message table with colour-coded rows by message type
-- Row marking for tracking specific messages
-- Export to JSON or raw binary files
-- Right-click copy from detail views
-- Timestamp tooltips showing human-readable dates
+### Detail Views
+- **JSON Tab**: Syntax-highlighted JSON with One Dark theme colors (keys=red, strings=green, numbers=orange, booleans/null=purple)
+- **Raw Tab**: Hex dump with offset, hex bytes, and ASCII columns
+- **Modify Tab** (outgoing only): Edit JSON and resend to server
+- **RegEx Tab**: Shows regex rule matches
+
+### Regex Security Scanning
+- 25 default regex rules for detecting sensitive data:
+  - Email addresses, IPv4 addresses, South African ID numbers
+  - Credit card numbers, JWT tokens
+  - AWS keys, GCP credentials, GitHub tokens, GitLab tokens
+  - Private keys (RSA, DSA, EC, ECDSA, OPENSSH)
+  - Stripe, Slack, Discord, SendGrid, Twilio, Azure keys
+  - Generic secret patterns (key, token, secret, password, api_key)
+- Yellow highlighting in table rows and JSON view
+- Tooltip on hover shows matching rule names
+- Scoped to decoded data fields only (excludes metadata)
+- Protected against catastrophic backtracking
+
+### Configuration (Tools → Options → Crimson Blazor Decoder)
+- Add/remove/edit regex rules
+- Enable/disable rules separately for Client→Server and Server→Client
+- Click column headers to toggle all checkboxes
+- Pattern validation on edit
+- Maximum 200 rules allowed
+
+### Actions
+- **Clear Messages**: Remove all decoded messages (with confirmation)
+- **Export**: Export selected message as JSON or raw binary
+- **Copy**: Right-click copy from detail views
+- **Mark/Unmark**: Right-click to flag messages
 
 ## Installation
 
 Pre-built releases are available on the [releases page](https://github.com/crimsonwall/crimsonblazordecoder/releases). Download the `.zap` file and install it in ZAP via **File > Load Add-on File...**.
 
 After installation, open the panel via **View > Show Tab > Crimson Blazor Decoder Tab**.
+
+## Documentation
+
+For detailed usage instructions and configuration options, see the [help documentation](https://github.com/crimsonwall/crimsonblazordecoder/blob/main/src/main/resources/com/crimsonwall/crimsonblazordecoder/resources/help.html).
 
 ## Building from Source
 
@@ -82,14 +113,29 @@ cd /path/to/zap-extensions
 
 Once built, install the add-on via **Tools > Manage Add-ons > Load Add-on from File** and select the `.zap` file, or copy it directly to the ZAP `plugin` directory.
 
-### Requirements
+## Requirements
 
 - OWASP ZAP 2.17.0 or later
 - The WebSocket add-on (installed by default in ZAP)
 
-## No Warranty
+## Tips
 
-This software is provided "as is" without warranty of any kind, express or implied. In no event shall the authors be liable for any claim, damages, or other liability arising from the use of this software.
+- **Disable auto-scroll**: Click any row other than the last one to stop auto-scroll and manually inspect previous messages
+- **Timestamp tooltips**: Hover over `timestamp` fields in the JSON view to see human-readable dates
+- **Modify and resend**: Use the Modify tab on outgoing messages to test how the server handles modified payloads
+- **Quick regex toggle**: Click the C→S or S→C column header in options to enable/disable all rules
+
+## Performance
+
+- Maximum 10,000 messages stored in memory
+- JSON display truncated to 50,000 characters
+- Hex dump display truncated to 4,096 bytes
+- Regex matching limited to 5,000 characters per payload
+- Character access limited to 100,000 per regex pattern (prevents catastrophic backtracking)
+
+## License
+
+Copyright 2026 crimsonwall.com. Licensed under the Apache License, Version 2.0.
 
 ## Contributing
 

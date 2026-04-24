@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
+ * Renico Koen / Crimson Wall / 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import java.util.Map;
  */
 public class BlazorPackMessage {
 
-    private static final int MAX_HEX_DISPLAY = 256; // Max bytes to show as hex
+    private static final int MAX_HEX_DISPLAY = 256;
 
     private BlazorPackMessageType messageType;
     private int messageId;
@@ -51,8 +51,7 @@ public class BlazorPackMessage {
                     "arg_4_1",
                     "arg_4_0",
                     "messagePackData",
-                    "rawPayload",
-                    "arguments");
+                    "rawPayload");
 
     /** Constructs an empty message with the current timestamp. */
     public BlazorPackMessage() {
@@ -61,42 +60,92 @@ public class BlazorPackMessage {
         this.timestamp = System.currentTimeMillis();
     }
 
+    /**
+     * Returns the Blazor Pack message type.
+     *
+     * @return the message type
+     */
     public BlazorPackMessageType getMessageType() {
         return messageType;
     }
 
+    /**
+     * Sets the Blazor Pack message type.
+     *
+     * @param messageType the message type to set
+     */
     public void setMessageType(BlazorPackMessageType messageType) {
         this.messageType = messageType;
     }
 
+    /**
+     * Returns the message ID (typically the WebSocket channel ID).
+     *
+     * @return the message ID
+     */
     public int getMessageId() {
         return messageId;
     }
 
+    /**
+     * Sets the message ID.
+     *
+     * @param messageId the message ID to set
+     */
     public void setMessageId(int messageId) {
         this.messageId = messageId;
     }
 
+    /**
+     * Returns the raw payload as a string (JSON or Base64).
+     *
+     * @return the raw payload string, may be null
+     */
     public String getRawPayload() {
         return rawPayload;
     }
 
+    /**
+     * Sets the raw payload string.
+     *
+     * @param rawPayload the raw payload string
+     */
     public void setRawPayload(String rawPayload) {
         this.rawPayload = rawPayload;
     }
 
+    /**
+     * Returns a defensive copy of the raw binary payload.
+     *
+     * @return a copy of the raw bytes, or null if not set
+     */
     public byte[] getRawBytes() {
         return rawBytes != null ? rawBytes.clone() : null;
     }
 
+    /**
+     * Sets the raw binary payload (stored as a defensive copy).
+     *
+     * @param rawBytes the raw bytes to store
+     */
     public void setRawBytes(byte[] rawBytes) {
         this.rawBytes = rawBytes != null ? rawBytes.clone() : null;
     }
 
+    /**
+     * Returns the decoded data fields as a map.
+     *
+     * @return the decoded data map
+     */
     public Map<String, Object> getDecodedData() {
         return decodedData;
     }
 
+    /**
+     * Replaces the decoded data map.
+     *
+     * @param decodedData the new decoded data map
+     */
     public void setDecodedData(Map<String, Object> decodedData) {
         this.decodedData = decodedData;
     }
@@ -111,16 +160,26 @@ public class BlazorPackMessage {
         this.decodedData.put(key, value);
     }
 
+    /**
+     * Returns the list of reference strings (e.g., JS dependency names).
+     *
+     * @return the references list
+     */
     public List<String> getReferences() {
         return references;
     }
 
+    /**
+     * Replaces the references list.
+     *
+     * @param references the new references list
+     */
     public void setReferences(List<String> references) {
         this.references = references;
     }
 
     /**
-     * Adds a reference string (e.g. a JS dependency name).
+     * Adds a reference string (e.g., a JS dependency name).
      *
      * @param reference the reference to add
      */
@@ -128,32 +187,62 @@ public class BlazorPackMessage {
         this.references.add(reference);
     }
 
+    /**
+     * Returns whether this message was sent as a binary WebSocket frame.
+     *
+     * @return {@code true} if binary frame
+     */
     public boolean isBinary() {
         return isBinary;
     }
 
+    /**
+     * Sets whether this message was sent as a binary frame.
+     *
+     * @param binary {@code true} for binary frame
+     */
     public void setBinary(boolean binary) {
         isBinary = binary;
     }
 
+    /**
+     * Returns whether this message was sent from client to server.
+     *
+     * @return {@code true} if outgoing (client-to-server)
+     */
     public boolean isOutgoing() {
         return outgoing;
     }
 
+    /**
+     * Sets the direction of this message.
+     *
+     * @param outgoing {@code true} if outgoing (client-to-server)
+     */
     public void setOutgoing(boolean outgoing) {
         this.outgoing = outgoing;
     }
 
+    /**
+     * Returns the timestamp when this message was captured.
+     *
+     * @return the epoch millis timestamp
+     */
     public long getTimestamp() {
         return timestamp;
     }
 
+    /**
+     * Sets the capture timestamp.
+     *
+     * @param timestamp the epoch millis timestamp
+     */
     public void setTimestamp(long timestamp) {
         this.timestamp = timestamp;
     }
 
     /**
-     * Convert the decoded message to a pretty-printed JSON string.
+     * Converts the decoded message to a pretty-printed JSON string.
      *
      * @return JSON representation of the message
      */
@@ -244,11 +333,10 @@ public class BlazorPackMessage {
     }
 
     /**
-     * Convert the decoded message to a JSON string suitable for regex matching.
+     * Converts the decoded message to a JSON string suitable for regex matching.
      *
      * <p>Only the structured {@code data} field is included — metadata like {@code timestamp},
-     * {@code messageId}, and {@code rawPayload} are excluded to avoid false positives (e.g., credit
-     * card regex matching epoch timestamps, SA ID regex matching hex byte sequences).
+     * {@code messageId}, and {@code rawPayload} are excluded to avoid false positives.
      *
      * @return a JSON string containing only decoded, human-readable data fields
      */
@@ -296,8 +384,8 @@ public class BlazorPackMessage {
     }
 
     /**
-     * Append a JSON value for regex matching, recursing into maps and lists but skipping raw binary
-     * data and replacing byte arrays with a placeholder.
+     * Appends a JSON value for regex matching, recursing into maps and lists but skipping raw
+     * binary data and replacing byte arrays with a placeholder.
      */
     private void appendDecodedJsonValue(StringBuilder sb, Object value, int indent) {
         if (value instanceof String) {

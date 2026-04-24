@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
+ * Renico Koen / Crimson Wall / 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -90,6 +90,11 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
         setI18nPrefix(PREFIX);
     }
 
+    /**
+     * Registers the WebSocket observer, UI panel, and options panel with ZAP.
+     *
+     * @param extensionHook the ZAP extension hook
+     */
     @Override
     public void hook(ExtensionHook extensionHook) {
         super.hook(extensionHook);
@@ -113,11 +118,19 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
         LOGGER.info("Crimson Blazor Decoder extension hooked successfully");
     }
 
+    /**
+     * Indicates this extension supports dynamic unload.
+     *
+     * @return {@code true}
+     */
     @Override
     public boolean canUnload() {
         return true;
     }
 
+    /**
+     * Cleans up observers, proxies, and UI resources when the extension is unloaded.
+     */
     @Override
     public void unload() {
         super.unload();
@@ -138,16 +151,31 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
         optionsPanel = null;
     }
 
+    /**
+     * Returns the add-on author.
+     *
+     * @return the author string
+     */
     @Override
     public String getAuthor() {
         return "Renico Koen / crimsonwall.com";
     }
 
+    /**
+     * Returns the localized add-on description.
+     *
+     * @return the description string
+     */
     @Override
     public String getDescription() {
         return getMessages().getString(PREFIX + ".desc");
     }
 
+    /**
+     * Returns the add-on URL.
+     *
+     * @return the project URL, or null on error
+     */
     @Override
     public URL getURL() {
         try {
@@ -170,7 +198,11 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
         }
     }
 
-    /** Get the main UI panel for displaying decoded Blazor messages. */
+    /**
+     * Returns the main UI panel, lazy-initialised.
+     *
+     * @return the Blazor Decoder panel
+     */
     public CrimsonBlazorDecoderPanel getBlazerPanel() {
         if (blazerPanel == null) {
             blazerPanel = new CrimsonBlazorDecoderPanel(this);
@@ -178,17 +210,30 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
         return blazerPanel;
     }
 
-    /** Check if a WebSocket channel is currently active (connected). */
+    /**
+     * Checks if a WebSocket channel is currently active (connected).
+     *
+     * @param channelId the channel ID to check
+     * @return {@code true} if an active proxy exists for the channel
+     */
     public boolean isChannelActive(int channelId) {
         return activeProxies.containsKey(channelId);
     }
 
-    /** Get the decoder instance. */
+    /**
+     * Returns the Blazor Pack decoder instance.
+     *
+     * @return the decoder, or null after unload
+     */
     public BlazorPackDecoder getDecoder() {
         return decoder;
     }
 
-    /** Get the regex configuration, lazy-initialised with synchronized access. */
+    /**
+     * Returns the regex configuration, lazy-initialised with synchronized access.
+     *
+     * @return the regex configuration instance
+     */
     public synchronized RegexConfig getRegexConfig() {
         if (regexConfig == null) {
             regexConfig = new RegexConfig();
@@ -196,7 +241,11 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
         return regexConfig;
     }
 
-    /** Get the options panel for regex settings, lazy-initialised with synchronized access. */
+    /**
+     * Returns the regex options panel, lazy-initialised with synchronized access.
+     *
+     * @return the options panel
+     */
     public synchronized OptionsRegexPanel getOptionsPanel() {
         if (optionsPanel == null) {
             optionsPanel = new OptionsRegexPanel(this);
@@ -204,7 +253,11 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
         return optionsPanel;
     }
 
-    /** Add a decoded Blazor Pack message to the UI panel. */
+    /**
+     * Adds a decoded Blazor Pack message to the UI panel on the Swing EDT.
+     *
+     * @param message the decoded message to display
+     */
     public void addDecodedMessage(BlazorPackMessage message) {
         if (View.isInitialised() && blazerPanel != null) {
             EventQueue.invokeLater(
@@ -269,7 +322,11 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
     /** Cached icon to avoid repeated loading. */
     private static volatile ImageIcon cachedIcon;
 
-    /** Get the add-on's icon. */
+    /**
+     * Returns the add-on's icon, cached for reuse.
+     *
+     * @return the scaled icon
+     */
     public static ImageIcon getIcon() {
         if (cachedIcon == null) {
             cachedIcon =

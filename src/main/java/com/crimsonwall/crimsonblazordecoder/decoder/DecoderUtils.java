@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
+ * Renico Koen / Crimson Wall / 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -104,8 +104,11 @@ public final class DecoderUtils {
                     break;
                 default:
                     if (c < 0x20) {
-                        // Escape any other control character as backslash-u-XXXX
-                        sb.append(String.format("\\u%04x", (int) c));
+                        sb.append("\\u");
+                        sb.append(HEX_CHARS[(c >> 12) & 0xF]);
+                        sb.append(HEX_CHARS[(c >> 8) & 0xF]);
+                        sb.append(HEX_CHARS[(c >> 4) & 0xF]);
+                        sb.append(HEX_CHARS[c & 0xF]);
                     } else {
                         sb.append(c);
                     }

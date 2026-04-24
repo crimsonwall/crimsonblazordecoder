@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
+ * Renico Koen / Crimson Wall / 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,6 +52,9 @@ public class BlazorPackEncoder {
     /** Tag key used to represent JSON strings that were serialized as arrays. */
     static final String JSON_TAG = "$json";
 
+    /** Maximum JSON input length to prevent OOM on unreasonably large inputs. */
+    private static final int MAX_JSON_LENGTH = DecoderUtils.MAX_PAYLOAD_SIZE;
+
     private final MessagePackEncoder msgPackEncoder = new MessagePackEncoder();
 
     /**
@@ -70,9 +73,16 @@ public class BlazorPackEncoder {
      * @throws IllegalArgumentException if the string is not valid JSON
      */
     public Object parseJson(String json) {
+        if (json == null) {
+            throw new IllegalArgumentException("JSON input is null");
+        }
         String trimmed = json.trim();
         if (trimmed.isEmpty()) {
             throw new IllegalArgumentException("Empty JSON input");
+        }
+        if (trimmed.length() > MAX_JSON_LENGTH) {
+            throw new IllegalArgumentException(
+                    "JSON input too large: " + trimmed.length() + " chars (max " + MAX_JSON_LENGTH + ")");
         }
         try {
             int[] pos = {0};
@@ -334,7 +344,16 @@ public class BlazorPackEncoder {
         if (map.size() == 1 && map.containsKey(JSON_TAG)) {
             Object jsonVal = map.get(JSON_TAG);
             if (jsonVal instanceof String) {
-                return parseJson((String) jsonVal); // fresh parse, depth resets
+                // Continue parsing with the same depth to prevent unbounded recursion
+                int[] pos2 = {0};
+                String inner = (String) jsonVal;
+                Object parsed = parseValue(inner, pos2, depth);
+                skipWhitespace(inner, pos2);
+                if (pos2[0] != inner.length()) {
+                    throw new IllegalArgumentException(
+                            "Unexpected trailing characters in $json value at position " + pos2[0]);
+                }
+                return parsed;
             }
         }
         return map;

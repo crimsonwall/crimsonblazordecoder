@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
+ * Renico Koen / Crimson Wall / 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -282,6 +282,9 @@ public class BlazorPackDecoder {
             LOGGER.debug("Binary text message: {}", text);
 
             BlazorPackMessage result = decodeTextMessage(data);
+            // Preserve binary flag and raw bytes from the outer wrapper
+            result.setBinary(true);
+            result.setRawBytes(message.getRawBytes());
             return result;
         } catch (Exception e) {
             LOGGER.debug("Error decoding binary text message: {}", e.getMessage());
@@ -839,7 +842,7 @@ public class BlazorPackDecoder {
                         message.addDecodedField(subKey, subItem);
                     }
                 }
-            } else if (!(item instanceof String && message.getDecodedData().containsValue(item))) {
+            } else if (!message.getDecodedData().containsKey(key)) {
                 message.addDecodedField(key, item);
             }
         }
@@ -918,7 +921,11 @@ public class BlazorPackDecoder {
             LOGGER.debug("Trying to parse as JSON: {}", text);
 
             JSONObject json = JSONObject.fromObject(text);
-            return decodeTextMessage(payload);
+            BlazorPackMessage result = decodeTextMessage(payload);
+            // Preserve binary flag and raw bytes from the outer wrapper
+            result.setBinary(true);
+            result.setRawBytes(message.getRawBytes());
+            return result;
         } catch (Exception e) {
             // Not JSON either - store as base64 for inspection
             message.setRawPayload(Base64.getEncoder().encodeToString(payload));

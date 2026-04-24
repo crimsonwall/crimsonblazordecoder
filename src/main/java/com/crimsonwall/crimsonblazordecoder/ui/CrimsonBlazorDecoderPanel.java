@@ -1,7 +1,7 @@
 /*
  * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
  *
- * Written by Renico Koen / Crimson Wall (crimsonwall.com) in 2026.
+ * Renico Koen / Crimson Wall / 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -134,6 +134,11 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
     private final SimpleAttributeSet attrBoolNull = new SimpleAttributeSet();
     private final SimpleAttributeSet attrPunct = new SimpleAttributeSet();
 
+    /**
+     * Constructs the main Blazor Decoder panel.
+     *
+     * @param extension the parent extension that provides configuration and message-sending capabilities
+     */
     public CrimsonBlazorDecoderPanel(ExtensionCrimsonBlazorDecoder extension) {
         this.extension = extension;
         initAttributes();
@@ -966,31 +971,32 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
         int displayBytes = Math.min(bytes.length, MAX_HEX_DISPLAY_BYTES);
         int totalRows = (displayBytes + bytesPerRow - 1) / bytesPerRow;
 
+        // Batch all rows into a single plain-text string first, then apply colour per-section
+        // to minimise expensive insertString calls. We use 2 insertString calls per row
+        // (offset+hex as one block, ASCII as another) instead of 3.
         for (int row = 0; row < totalRows; row++) {
             int rowOffset = row * bytesPerRow;
 
-            // Offset column
-            appendText(doc, String.format("%08x  ", rowOffset), attrOffset);
-
-            // Hex columns
-            StringBuilder hexBuf = new StringBuilder(50);
+            // Offset + hex columns combined
+            StringBuilder leftBuf = new StringBuilder(70);
+            leftBuf.append(String.format("%08x  ", rowOffset));
             for (int col = 0; col < bytesPerRow; col++) {
-                if (col == 8) hexBuf.append(' ');
+                if (col == 8) leftBuf.append(' ');
                 int idx = rowOffset + col;
                 if (idx < bytes.length) {
                     int b = bytes[idx] & 0xFF;
-                    hexBuf.append(HEX_CHARS[(b >> 4) & 0x0F]);
-                    hexBuf.append(HEX_CHARS[b & 0x0F]);
-                    hexBuf.append(' ');
+                    leftBuf.append(HEX_CHARS[(b >> 4) & 0x0F]);
+                    leftBuf.append(HEX_CHARS[b & 0x0F]);
+                    leftBuf.append(' ');
                 } else {
-                    hexBuf.append("   ");
+                    leftBuf.append("   ");
                 }
             }
-            hexBuf.append(' ').append('|');
-            appendText(doc, hexBuf.toString(), attrHex);
+            leftBuf.append(' ').append('|');
+            appendText(doc, leftBuf.toString(), attrHex);
 
-            // ASCII column
-            StringBuilder asciiBuf = new StringBuilder(17);
+            // ASCII column + newline
+            StringBuilder asciiBuf = new StringBuilder(18);
             for (int col = 0; col < bytesPerRow; col++) {
                 int idx = rowOffset + col;
                 if (idx < bytes.length) {
@@ -1194,33 +1200,43 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
         }
 
         public void removeOldest() {
-            if (!messages.isEmpty()) {
-                messages.remove(0);
-                markedRows.remove(0);
-                regexMatchedRows.remove(0);
-                // Shift all marked indices down by 1
-                Set<Integer> shifted = new HashSet<>();
-                for (Integer idx : markedRows) {
-                    shifted.add(idx - 1);
-                }
-                markedRows.clear();
-                markedRows.addAll(shifted);
-                Set<Integer> shiftedRegex = new HashSet<>();
-                for (Integer idx : regexMatchedRows) {
-                    shiftedRegex.add(idx - 1);
-                }
-                regexMatchedRows.clear();
-                regexMatchedRows.addAll(shiftedRegex);
-                java.util.Map<Integer, java.util.Set<String>> shiftedDetails = new java.util.HashMap<>();
-                for (java.util.Map.Entry<Integer, java.util.Set<String>> e : regexMatchDetails.entrySet()) {
-                    int key = e.getKey();
-                    if (key == 0) continue; // removed row
-                    shiftedDetails.put(key - 1, e.getValue());
-                }
-                regexMatchDetails.clear();
-                regexMatchDetails.putAll(shiftedDetails);
-                fireTableRowsDeleted(0, 0);
+            if (messages.isEmpty()) {
+                return;
             }
+            // Remove 10% (at least 1) to amortise the O(n) index shifting cost
+            int removeCount = Math.max(1, MAX_MESSAGES / 10);
+            if (removeCount > messages.size()) {
+                removeCount = messages.size();
+            }
+
+            messages.subList(0, removeCount).clear();
+
+            // Shift tracked indices down by removeCount, dropping those that fall below 0
+            Set<Integer> shifted = new HashSet<>();
+            for (Integer idx : markedRows) {
+                int newIdx = idx - removeCount;
+                if (newIdx >= 0) shifted.add(newIdx);
+            }
+            markedRows.clear();
+            markedRows.addAll(shifted);
+
+            Set<Integer> shiftedRegex = new HashSet<>();
+            for (Integer idx : regexMatchedRows) {
+                int newIdx = idx - removeCount;
+                if (newIdx >= 0) shiftedRegex.add(newIdx);
+            }
+            regexMatchedRows.clear();
+            regexMatchedRows.addAll(shiftedRegex);
+
+            java.util.Map<Integer, java.util.Set<String>> shiftedDetails = new java.util.HashMap<>();
+            for (java.util.Map.Entry<Integer, java.util.Set<String>> e : regexMatchDetails.entrySet()) {
+                int newKey = e.getKey() - removeCount;
+                if (newKey >= 0) shiftedDetails.put(newKey, e.getValue());
+            }
+            regexMatchDetails.clear();
+            regexMatchDetails.putAll(shiftedDetails);
+
+            fireTableRowsDeleted(0, removeCount - 1);
         }
 
         public BlazorPackMessage getMessageAt(int row) {
@@ -1311,6 +1327,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                 currentMessage = null;
                 updateStatus();
                 jsonView.setText("");
+                rawView.setText("");
                 updateModifyView(null);
             }
         }

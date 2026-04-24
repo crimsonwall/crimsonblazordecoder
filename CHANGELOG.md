@@ -2,7 +2,7 @@
 
 All notable changes to this add-on will be documented in this file.
 
-## 1.0.1 - 2026-04-25
+## 1.0.1 - 2026-04-24
 
 ### Fixed
 - Thread safety: RegexConfig entries list now uses synchronized access to prevent concurrent modification between WebSocket observer and Swing EDT threads

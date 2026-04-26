@@ -1,6 +1,6 @@
 # Crimson Blazor Decoder
 
-An OWASP ZAP add-on that decodes and displays Blazor Pack messages sent over WebSocket connections in real time.
+An ZAP add-on that decodes and displays Blazor Pack messages sent over WebSocket connections in real time.
 
 ## Screenshot
 
@@ -115,7 +115,7 @@ Once built, install the add-on via **Tools > Manage Add-ons > Load Add-on from F
 
 ## Requirements
 
-- OWASP ZAP 2.17.0 or later
+- ZAP 2.17.0 or later
 - The WebSocket add-on (installed by default in ZAP)
 
 ## Tips

@@ -2,6 +2,11 @@
 
 All notable changes to this add-on will be documented in this file.
 
+## 1.0.2 - 2026-04-26
+
+### Changed
+- Removed references to OWASP ZAP and replaced them with ZAP.
+
 ## 1.0.1 - 2026-04-24
 
 ### Fixed

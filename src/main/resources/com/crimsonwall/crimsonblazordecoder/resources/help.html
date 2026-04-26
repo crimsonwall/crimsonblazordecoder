@@ -7,7 +7,7 @@
 <body>
 <h1>Crimson Blazor Decoder</h1>
 <h2>Overview</h2>
-<p>Crimson Blazor Decoder is an OWASP ZAP add-on that decodes and displays Blazor Pack messages sent over WebSocket connections in real time.</p>
+<p>Crimson Blazor Decoder is an ZAP add-on that decodes and displays Blazor Pack messages sent over WebSocket connections in real time.</p>
 <p>Blazor Server applications communicate between the browser and server using the Blazor Pack protocol over SignalR WebSockets. The messages are encoded in a binary MessagePack format that is not human-readable. This makes security testing of Blazor Server applications difficult, as the WebSocket traffic in ZAP appears as opaque binary data.</p>
 <p>Crimson Blazor Decoder intercepts these WebSocket messages, decodes the MessagePack payload, and presents the data as pretty-printed JSON in a dedicated ZAP panel, enabling security testers to inspect and analyse Blazor Pack traffic.</p>
 <h2>Why Use This Add-on?</h2>
@@ -155,7 +155,7 @@
 <p>A file save dialog is shown with a default filename based on the message ID and timestamp. You will be prompted to confirm if the file already exists.</p>
 <h2>Requirements</h2>
 <ul>
-<li>OWASP ZAP 2.17.0 or later</li>
+<li>ZAP 2.17.0 or later</li>
 <li>The WebSocket add-on (installed by default in ZAP)</li>
 </ul>
 <h2>Accessing the Panel</h2>

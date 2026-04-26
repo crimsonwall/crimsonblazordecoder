@@ -16,7 +16,7 @@ zapAddOn {
 
     manifest {
         zapVersion.set("2.17.0")
-        author.set("CrimsonWall")
+        author.set("Renico Koen / CrimsonWall")
         url.set("https://github.com/crimsonwall/crimsonblazordecoder")
         extensions {
             register("com.crimsonwall.crimsonblazordecoder.ExtensionCrimsonBlazorDecoder")
@@ -61,7 +61,7 @@ spotless {
         licenseHeader(
             """
             /*
-             * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
+             * Crimson Blazor Decoder - Blazor Pack Decoder for ZAP.
              *
              * Renico Koen / Crimson Wall / 2026.
              *

@@ -41,7 +41,7 @@ configure<com.diffplug.gradle.spotless.SpotlessExtension> {
         licenseHeader(
             """
             /*
-             * Crimson Blazor Decoder - Blazor Pack Decoder for OWASP ZAP.
+             * Crimson Blazor Decoder - Blazor Pack Decoder for ZAP.
              *
              * Renico Koen / Crimson Wall / 2026.
              *

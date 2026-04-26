@@ -1,6 +1,6 @@
 # Crimson Blazor Decoder
 
-An ZAP add-on that decodes and displays Blazor Pack messages sent over WebSocket connections in real time.
+ZAP add-on that decodes and displays Blazor Pack messages sent over WebSocket connections in real time.
 
 ## Screenshot
 

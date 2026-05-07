@@ -50,7 +50,7 @@ tasks.withType<JavaCompile>().configureEach {
 
 dependencies {
     compileOnly("org.zaproxy:zap:2.17.0")
-    compileOnly(files("../zap-extensions/addOns/websocket/build/libs/websocket-37.jar"))
+    compileOnly(files("../../tools/zap-extensions/addOns/websocket/build/libs/websocket-37.jar"))
     compileOnly("biz.aQute.bnd:biz.aQute.bnd.annotation:7.2.3")
     compileOnly("com.google.code.findbugs:findbugs-annotations:3.0.1")
 }

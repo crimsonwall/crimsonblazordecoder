@@ -2,6 +2,11 @@
 
 All notable changes to this add-on will be documented in this file.
 
+## 1.0.3 - 2026-05-07
+
+### Fixed
+- Build warnings fixed
+
 ## 1.0.2 - 2026-04-26
 
 ### Changed

@@ -77,6 +77,7 @@ import com.crimsonwall.crimsonblazordecoder.regex.RegexEntry;
  * <p>This panel shows a table of all decoded messages on the left, with a detail view on the right
  * showing the pretty-printed JSON representation of the selected message.
  */
+@SuppressWarnings("serial")
 public class CrimsonBlazorDecoderPanel extends AbstractPanel {
 
     private static final long serialVersionUID = 1L;
@@ -139,6 +140,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
      *
      * @param extension the parent extension that provides configuration and message-sending capabilities
      */
+    @SuppressWarnings("this-escape")
     public CrimsonBlazorDecoderPanel(ExtensionCrimsonBlazorDecoder extension) {
         this.extension = extension;
         initAttributes();
@@ -350,7 +352,7 @@ public class CrimsonBlazorDecoderPanel extends AbstractPanel {
                             return null;
                         }
                         // Check if mouse is near the timestamp field
-                        int offset = viewToModel(event.getPoint());
+                        int offset = Math.round(viewToModel2D(event.getPoint()));
                         try {
                             String text = getDocument().getText(0, getDocument().getLength());
                             // Find the line containing the offset

@@ -56,6 +56,7 @@ import com.crimsonwall.crimsonblazordecoder.regex.RegexEntry;
  * <p>Provides a table of regex rules with name, pattern, client-to-server (C2S), and server-to-client (S2C)
  * columns for managing pattern matching rules that highlight sensitive data in decoded Blazor messages.
  */
+@SuppressWarnings("serial")
 public class OptionsRegexPanel extends AbstractParamPanel {
 
     private static final long serialVersionUID = 1L;
@@ -71,6 +72,7 @@ public class OptionsRegexPanel extends AbstractParamPanel {
      *
      * @param extension the parent extension used to read and persist regex configuration
      */
+    @SuppressWarnings("this-escape")
     public OptionsRegexPanel(ExtensionCrimsonBlazorDecoder extension) {
         this.extension = extension;
         setName(Constant.messages.getString("crimsonblazordecoder.options.title"));

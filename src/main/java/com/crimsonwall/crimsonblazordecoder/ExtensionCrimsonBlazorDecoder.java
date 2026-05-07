@@ -85,6 +85,7 @@ public class ExtensionCrimsonBlazorDecoder extends ExtensionAdaptor {
     private final Map<Integer, WebSocketProxy> activeProxies = new ConcurrentHashMap<>();
 
     /** Creates the extension and sets the i18n prefix. */
+    @SuppressWarnings("this-escape")
     public ExtensionCrimsonBlazorDecoder() {
         super(NAME);
         setI18nPrefix(PREFIX);
